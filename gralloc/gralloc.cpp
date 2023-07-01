@@ -171,14 +171,18 @@ static int gralloc_alloc_rgb(int ionfd, int w, int h, int format, int usage,
     int is_compressible = check_for_compression(w, h, format, usage);
 
     switch (format) {
+    #ifdef HAL_PIXEL_FORMAT_RGBA_FP16
         case HAL_PIXEL_FORMAT_RGBA_FP16:
             bpp = 8;
             break;
+    #endif
         case HAL_PIXEL_FORMAT_EXYNOS_ARGB_8888:
         case HAL_PIXEL_FORMAT_RGBA_8888:
         case HAL_PIXEL_FORMAT_RGBX_8888:
         case HAL_PIXEL_FORMAT_BGRA_8888:
+        #ifdef HAL_PIXEL_FORMAT_RGBA_1010102
         case HAL_PIXEL_FORMAT_RGBA_1010102:
+        #endif
             bpp = 4;
             break;
         case HAL_PIXEL_FORMAT_RGB_888:
@@ -288,14 +292,18 @@ static int gralloc_alloc_framework_yuv(int ionfd, int w, int h, int format, int 
             *stride = w;
             size = *stride * h * 3 / 2 + ext_size;
             break;
+            #ifdef HAL_PIXEL_FORMAT_Y8
         case HAL_PIXEL_FORMAT_Y8:
             *stride = ALIGN(w, 16);
             size = *stride * h;
             break;
+            #endif
+            #ifdef HAL_PIXEL_FORMAT_Y16
         case HAL_PIXEL_FORMAT_Y16:
             *stride = ALIGN(w, 16);
             size = (*stride * h) * 2;
             break;
+            #endif
         default:
             ALOGE("invalid yuv format %d\n", format);
             return -EINVAL;
@@ -405,8 +413,12 @@ static int gralloc_alloc_yuv(int ionfd, int w, int h, int format,
         case HAL_PIXEL_FORMAT_YV12:
         case HAL_PIXEL_FORMAT_EXYNOS_YCbCr_420_P:
         case HAL_PIXEL_FORMAT_YCrCb_420_SP:
+        #ifdef HAL_PIXEL_FORMAT_Y8
         case HAL_PIXEL_FORMAT_Y8:
+        #endif
+        #ifdef HAL_PIXEL_FORMAT_Y16
         case HAL_PIXEL_FORMAT_Y16:
+        #endif
             return gralloc_alloc_framework_yuv(ionfd, w, h, format, frameworkFormat, usage,
                                                ion_flags, hnd, stride);
         case HAL_PIXEL_FORMAT_EXYNOS_YCrCb_420_SP_M:
@@ -467,6 +479,7 @@ static int gralloc_alloc_yuv(int ionfd, int w, int h, int format,
                 planes = 1;
                 break;
             }
+            #ifdef HAL_PIXEL_FORMAT_EXYNOS_YCbCr_P010_M
         case HAL_PIXEL_FORMAT_EXYNOS_YCbCr_P010_M:
             {
                 chroma_size = ((*stride * 2) * luma_vstride / 2) + ext_size;
@@ -474,6 +487,7 @@ static int gralloc_alloc_yuv(int ionfd, int w, int h, int format,
                 planes = 3;
                 break;
             }
+            #endif
         default:
             ALOGE("invalid yuv format %d\n", format);
             return -EINVAL;
