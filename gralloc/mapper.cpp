@@ -256,6 +256,7 @@ int gralloc_lock(gralloc_module_t const* module,
         return -EINVAL;
     }
 
+/*
     switch(hnd->format)
     {
         case HAL_PIXEL_FORMAT_EXYNOS_ARGB_8888:
@@ -277,6 +278,7 @@ int gralloc_lock(gralloc_module_t const* module,
             ALOGE("gralloc_lock doesn't support YUV formats. Please use gralloc_lock_ycbcr()");
             return -EINVAL;
     }
+    */
 
 #ifdef GRALLOC_RANGE_FLUSH
     if(usage & GRALLOC_USAGE_SW_WRITE_MASK)
