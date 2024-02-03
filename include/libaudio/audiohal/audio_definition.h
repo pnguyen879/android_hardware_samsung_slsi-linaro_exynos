@@ -29,7 +29,9 @@
 
 // Duration for Normal Capture
 #define PREDEFINED_MEDIA_CAPTURE_DURATION   20  // 20ms
+#ifndef PREDEFINED_LOW_CAPTURE_DURATION
 #define PREDEFINED_LOW_CAPTURE_DURATION     4   // 4ms
+#endif
 
 // Duration for USB Playback and Capture
 #ifndef PREDEFINED_USB_PLAYBACK_DURATION
