@@ -30,7 +30,8 @@ LOCAL_SRC_FILES := \
 
 LOCAL_C_INCLUDES += \
         external/tinyalsa/include \
-	$(DEVICE_BASE_PATH)/$(TARGET_BOOTLOADER_BOARD_NAME)/conf
+	$(DEVICE_BASE_PATH)/$(TARGET_BOOTLOADER_BOARD_NAME)/conf \
+	$(BOARD_SOUNDTRIGGER_CONFIG_PATH)
 
 LOCAL_SHARED_LIBRARIES := \
         liblog libcutils libtinyalsa libhardware
