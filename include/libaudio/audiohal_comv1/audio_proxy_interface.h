@@ -17,10 +17,13 @@
 #ifndef AUDIO_PROXY_INTERFACE_H
 #define AUDIO_PROXY_INTERFACE_H
 
+
 /* Volume Type */
 enum {
     VOLUME_TYPE_OFFLOAD = 0,
-    VOLUME_TYPE_MMAP    = 1,
+    VOLUME_TYPE_MMAP,
+    VOLUME_TYPE_CALL,
+    VOLUME_TYPE_CALL_MUTE,
 };
 
 /* Compress Function Type */
@@ -51,13 +54,6 @@ enum {
     DEVICE_FMRADIO,
 };
 
-/* A-Box Configuration Type */
-enum {
-    NEED_VOICEPCM_REOPEN = 0,
-    SUPPORT_USB_BY_PRIMARY,
-    SUPPORT_A2DP_BY_PRIMARY,
-};
-
 /* A-Box Interface Type */
 enum {
     UAIF0 = 0,
@@ -66,17 +62,12 @@ enum {
     UAIF3,
 };
 
-// Audio Capability Check Utility Functions
-int  get_supported_device_number(void *proxy, int device_type);
-int  get_supported_config(void *proxy, int device_type);
-bool is_needed_config(void *proxy, int config_type);
 
 // Audio Usage Check Utility Functions
 bool is_active_usage_APCall(void *proxy);
 bool is_usage_CPCall(audio_usage ausage);
 bool is_active_usage_CPCall(void *proxy);
 bool is_usage_APCall(audio_usage ausage);
-bool is_usage_Loopback(audio_usage ausage);
 bool is_usb_connected(void);
 
 // Audio Stream Proxy Get/Set Fungtions
@@ -101,8 +92,6 @@ int   proxy_start_playback_stream(void *proxy_stream);
 int   proxy_write_playback_buffer(void *proxy_stream, void *buffer, int bytes);
 int   proxy_stop_playback_stream(void *proxy_stream);
 int   proxy_reconfig_playback_stream(void *proxy_stream, int type, void *config);
-int   proxy_update_playback_buffer(void *proxy_stream, void *buffer, int bytes);
-int   proxy_get_presen_position_temp(void *proxy_stream, uint64_t *frames, struct timespec *timestamp);
 int   proxy_get_render_position(void *proxy_stream, uint32_t *frames);
 int   proxy_get_presen_position(void *proxy_stream, uint64_t *frames, struct timespec *timestamp);
 int   proxy_getparam_playback_stream(void *proxy_stream, void *query_params, void *reply_params);
@@ -157,31 +146,15 @@ int   proxy_check_sthalstate(void *proxy);
 void  proxy_call_status(void *proxy, int status);
 int   proxy_set_parameters(void *proxy, void *parameters);
 int   proxy_get_microphones(void *proxy, void *array, int *count);
-void proxy_set_call_path_param(uint32_t set, uint32_t param, int32_t value);
-
-//
-void proxy_update_uhqa_playback_stream(void *proxy_stream, int high_quality_mode);
-void proxy_set_uhqa_stream_config(void *proxy_stream, bool config);
-bool proxy_get_uhqa_stream_config(void *proxy_stream);
+void  proxy_set_apcall_txse(void);
+void  proxy_clear_apcall_txse(void);
+void  proxy_set_call_path_param(uint32_t set, uint32_t param, int32_t value);
 
 void proxy_init_offload_effect_lib(void *proxy);
 void proxy_update_offload_effect(void *proxy_stream, int type);
-void proxy_set_dual_speaker_mode(void* proxy, bool state);
-void proxy_set_stream_channel(void *proxy_stream, int new_channel, bool skip);
-void proxy_set_spk_ampL_power(void* proxy, bool state);
-bool proxy_get_spk_ampL_power(void* proxy);
-#ifdef SUPPORT_BTA2DP_OFFLOAD
-bool proxy_is_bt_a2dp_ready(void);
-#endif
-void proxy_set_primary_mute(void* proxy, int count);
 
 // Audio Device Proxy Dump Function
 int   proxy_fw_dump(int fd);
-
-// Audio device set playback pcm config
-bool proxy_select_best_playback_pcmconfig(void *proxy, void *cur_proxy_stream, int compr_upscaler);
-void proxy_set_best_playback_pcmconfig(void *proxy, void *proxy_stream);  //set best playback pcm config
-void proxy_reset_playback_pcmconfig(void *proxy);
 
 // Audio Device Proxy Creation/Destruction
 bool  proxy_is_initialized(void);

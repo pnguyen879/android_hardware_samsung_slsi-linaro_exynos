@@ -17,9 +17,17 @@
 #ifndef __EXYNOS_AUDIOHAL_DEFINITION_H__
 #define __EXYNOS_AUDIOHAL_DEFINITION_H__
 
+#include "audio_odm_definition.h"
+
 /*
  * This header file has common definition and parameter for AudioHAL and AudioProxy
  */
+
+/* mixer_paths.xml */
+#define MAX_MIXER_LENGTH    256
+#define DEFAULT_MIXER_PATH  "/vendor/etc/"
+#define DEFAULT_MIXER_FILE  "mixer_paths.xml"
+#define MIXER_PATH_INFO     "/proc/device-tree/sound/mixer-paths"
 
 /* Stream Status */
 typedef enum {
@@ -41,48 +49,43 @@ typedef enum {
     CALL_MODE_MAX   = CALL_MODE_CNT - 1,
 } call_mode;
 
-/* Macro for Routing */
-#define ROUTE               true
-#define UNROUTE             false
-
+/* Routing Definition */
 typedef enum {
     NON_FORCE_ROUTE     = 0,
     FORCE_ROUTE,
     CALL_DRIVE
 } force_route;
 
-#define PREDEFINED_CAPTURE_DURATION     20   // 20ms
-#define LOW_LATENCY_CAPTURE_SAMPLE_RATE 48000
+#define ROUTE               true
+#define UNROUTE             false
 
-#define MAX_MIXER_LENGTH    256
-#define DEFAULT_MIXER_PATH  "/vendor/etc/"
-#define DEFAULT_MIXER_FILE  "mixer_paths.xml"
-#define MIXER_PATH_INFO     "/proc/device-tree/sound/mixer-paths"
-
-// Duration for Normal Capture
+/* Duration and Rate for Playback and Capture*/
+#define PREDEFINED_CAPTURE_DURATION         20  // 20ms
 #define PREDEFINED_MEDIA_CAPTURE_DURATION   20  // 20ms
 #define PREDEFINED_LOW_CAPTURE_DURATION     4   // 4ms
 
-#define PREDEFINED_DEFAULT_PLAYBACK_DURATION    10  // 10ms
+// USB Playback and Capture
+#define PREDEFINED_USB_PLAYBACK_DURATION    10  // 10ms
+#define PREDEFINED_USB_CAPTURE_DURATION     10  // 10ms
 
-// Duration for USB Playback and Capture
-#define PREDEFINED_USB_PLAYBACK_DURATION    5  // 5ms usb_outcom
-#define PREDEFINED_USB_CAPTURE_DURATION     5  // 5ms usb_incom
+#define LOW_LATENCY_CAPTURE_SAMPLE_RATE     48000
+
+/* FM Radio common definition and parameter */
+#define AUDIO_PARAMETER_KEY_FMRADIO_MODE                "fm_mode"
+#define AUDIO_PARAMETER_KEY_FMRADIO_VOLUME              "fm_radio_volume"
+
+/* Factory Manager common parameter */
+#define AUDIO_PARAMETER_KEY_FACTORY_RMS_TEST            "factory_test_mic_check"
+
+#define AUDIO_PARAMETER_FACTORY_TEST_LOOPBACK           "factory_test_loopback"
+#define AUDIO_PARAMETER_FACTORY_TEST_TYPE               "factory_test_type"
+#define AUDIO_PARAMETER_FACTORY_TEST_PATH               "factory_test_path"
+#define AUDIO_PARAMETER_FACTORY_TEST_ROUTE              "factory_test_route"
+
+/* VTS parameter */
+#define AUDIO_PARAMETER_SEAMLESS_VOICE                  "seamless_voice"
 
 /* Direct Stream playback Volume Unit */
 #define DIRECT_PLAYBACK_VOLUME_MAX   8192
-
-/* definitions for mixer ctl */
-// info for next stream
-#define MIXER_CTL_ABOX_PRIMARY_WIDTH        "ABOX UAIF0 width"
-#define MIXER_CTL_ABOX_PRIMARY_CHANNEL      "ABOX UAIF0 channel"
-#define MIXER_CTL_ABOX_PRIMARY_SAMPLERATE   "ABOX UAIF0 rate"
-// info for current stream
-#define MIXER_CTL_ABOX_CURRENT_WIDTH        "ABOX Bit Width Mixer"
-
-#define MIXER_CTL_OFFLOAD_UPSCALER          "UPSCALER"
-#define MIXER_CTL_OFFLOAD_FORMAT            "ComprTx0 Format"
-
-#define MMAP_MIN_SIZE_FRAMES_MAX            64 * 1024
 
 #endif  // __EXYNOS_AUDIOHAL_DEFINITION_H__

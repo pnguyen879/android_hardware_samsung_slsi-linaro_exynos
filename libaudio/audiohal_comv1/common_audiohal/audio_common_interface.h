@@ -20,10 +20,6 @@
 /* General Function for Mode Selection */
 bool isCPCallMode(struct audio_device *adev);
 bool isAPCallMode(struct audio_device *adev);
-bool isCallMode(struct audio_device *adev);
-
-/* General Function for check output type */
-bool is_primary_output(struct audio_device *adev, struct stream_out *out);
 
 /* General Function for Mixer Control */
 int adev_mixer_ctl_get_number(struct audio_device *adev, char *name);

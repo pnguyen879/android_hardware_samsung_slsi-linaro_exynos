@@ -31,6 +31,7 @@ typedef enum {
     ASTREAM_PLAYBACK_COMPR_OFFLOAD,     // For Compress Offload Profile
     ASTREAM_PLAYBACK_MMAP,              // For MMAP NoIRQ Output Profile
     ASTREAM_PLAYBACK_AUX_DIGITAL,       // For HDMI/DP Profile
+    ASTREAM_PLAYBACK_INCALL_MUSIC,      // For music uplink during Call
     ASTREAM_PLAYBACK_DIRECT,            // For Direct Output(5.1, 6.1, 7.1channel) Profile
 
     ASTREAM_CAPTURE_NO_ATTRIBUTE,       // For No Attributes Input Profile
@@ -38,8 +39,8 @@ typedef enum {
     ASTREAM_CAPTURE_CALL,               // For Call Recording
     ASTREAM_CAPTURE_LOW_LATENCY,        // For Low Latency Input Profile
     ASTREAM_CAPTURE_MMAP,               // For MMAP NoIRQ Input Profile
-    ASTREAM_CAPTURE_FM,                 // For FM Radio Recording
-    ASTREAM_CAPTURE_TELEPHONYRX,        // For TelephonyRx data capture
+    ASTREAM_CAPTURE_FM_TUNER,           // For FM Radio Recording
+    ASTREAM_CAPTURE_FM_RECORDING,       // For FM Radio Recording
 #ifdef SUPPORT_STHAL_INTERFACE
     ASTREAM_CAPTURE_HOTWORD,            // For VTS seamless Input Profile
 #endif

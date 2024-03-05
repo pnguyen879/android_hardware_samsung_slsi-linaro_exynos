@@ -26,6 +26,13 @@ enum {
 #define MIXER_CTL_VAL_INVALID       -1
 
 /* Specific Mixer Name */
-#define ABOX_APCALLBUFFTYPE_CONTROL_NAME    "ABOX PCM ext APCALL BUFFTYPE"
+// info for next stream
+#define MIXER_CTL_ABOX_PRIMARY_WIDTH        "ABOX UAIF0 Width"
+#define MIXER_CTL_ABOX_PRIMARY_CHANNEL      "ABOX UAIF0 Channel"
+#define MIXER_CTL_ABOX_PRIMARY_SAMPLERATE   "ABOX UAIF0 Rate"
+
+//add for Speaker Reference mute
+#define MIXER_CTL_SPK_REF_MUTE              "ABOX OEM REF LCH MUTE"
+
 
 #endif /* AUDIO_MIXERS */

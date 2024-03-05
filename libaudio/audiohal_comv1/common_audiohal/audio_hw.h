@@ -30,6 +30,13 @@
 #include "audio_offload.h"
 #include "audio_definition.h"
 
+/* Voice call - RIL interface */
+#include "voice_manager.h"
+
+/* Factory Mode Test */
+#include "factory_manager.h"
+
+
 /**
  ** Structure for Audio Output Stream
  ** Implements audio_stream_out structure
@@ -89,9 +96,6 @@ struct stream_out {
     float  vol_left, vol_right;
     bool direct_volume_enabled;
 
-    stream_event_callback_t event_callback;
-    void                    *event_cookie;
-
     /* Force Routing */
     force_route force;
     audio_devices_t rollback_devices;
@@ -114,6 +118,7 @@ struct stream_in {
     audio_source_t          requested_source;
 
     bool pcm_reconfig;
+
     struct audio_device *   adev;
 };
 
@@ -121,6 +126,7 @@ struct capture_stream {
     struct listnode node;
     struct stream_in *in;
 };
+
 
 /**
  ** Structure for Audio Primary HW Module
@@ -141,7 +147,6 @@ struct audio_device {
     audio_devices_t actual_playback_device;
     audio_devices_t actual_capture_device;
     audio_devices_t previous_playback_device;
-    audio_devices_t previous_capture_device;
 
     bool is_route_created;
 
@@ -154,6 +159,7 @@ struct audio_device {
     audio_usage active_capture_ausage;
     device_type active_capture_device;
     modifier_type active_capture_modifier;
+    audio_devices_t current_devices;
 
     // Voice
     struct voice_manager *voice;
@@ -167,51 +173,47 @@ struct audio_device {
     struct stream_out *primary_output;
     struct stream_in  *active_input;
     struct stream_out *compress_output;
+    struct stream_out  *fast_output;
+
     // Audio/Call Modes
     audio_mode_t amode;
     audio_mode_t previous_amode;
     call_mode    call_mode;
 
+    //special incall-music stream
+    bool incallmusic_on;
+
+    // VoIP SE
+    bool voipse_on;
+
     bool bluetooth_nrec;
     bool screen_on;
-    bool btsco_on;
 
+    fm_state fm_state;
     // STHAL seamless status
     bool seamless_enabled;
 
     // Customer Specific varibales
     bool support_reciever;
     bool support_backmic;
-
-    bool spectro;
+    bool support_thirdmic;
     bool fm_via_a2dp;
-    float fm_radio_volume;
-
-    bool mNSRISecure;
-    bool tx_data_inversion;
-
+    bool fm_radio_mute;
     int  pcmread_latency;
 
-    int  sound_speed;
-    int  sound_balance;
-    int  to_mono;
-    int  voice_rec_type;
-    bool ringtone_active;
-
     bool update_offload_volume;
-    bool update_mmap_volume;
+    int sound_speed;
+    int sound_balance;
+    int to_mono;
+    int effect_enable;
 };
 
-static bool is_speaker_device_type(device_type device);
 
 /* Functions for External Usage */
-bool    adev_set_route(void *stream, audio_usage_type usage_type, bool set, force_route force);
-#if AUDIO_PLATFORM_ABOX_V2
-bool adev_set_route_callstream(void *stream, audio_usage_type usage_type, bool set, force_route force);
-#endif
-void    update_call_stream(struct stream_out *out, audio_devices_t current_devices,
-                                audio_devices_t new_devices);
-void    update_capture_stream(struct stream_in *in, audio_devices_t current_devices,
-                                audio_devices_t new_devices);
+bool adev_set_route(void *stream, audio_usage_type usage_type, bool set, force_route force);
+void set_call_forwarding(struct audio_device *adev, bool mode);
+
+void update_call_stream(struct stream_out *out, audio_devices_t current_devices, audio_devices_t new_devices);
+void update_capture_stream(struct stream_in *in, audio_devices_t current_devices, audio_devices_t new_devices);
 
 #endif  // __EXYNOS_AUDIOHAL_H__
