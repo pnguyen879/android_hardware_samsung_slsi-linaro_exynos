@@ -22,15 +22,30 @@ include $(CLEAR_VARS)
 
 LOCAL_SRC_FILES := \
 	audio_hw.c \
-	../odm_specific/voice_manager.c \
 	../odm_specific/factory_manager.c \
 	../odm_specific/audio_odm_impl.c
+
+ifeq ($(BOARD_USE_SITRIL), true)
+LOCAL_SRC_FILES += \
+	../odm_specific/voice_manager_sit.c
+
+LOCAL_C_INCLUDES += \
+	$(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/audiohal_comv1/odm_specific/audioril-sit \
+	$(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/audiohal_comv1/odm_specific/audioril-sit/include
+
+LOCAL_CFLAGS += -DUSE_SITRIL
+else
+LOCAL_SRC_FILES += \
+	../odm_specific/voice_manager_sec.c
+
+LOCAL_C_INCLUDES += \
+	$(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/audiohal_comv1/odm_specific/audioril-sec \
+	$(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/audiohal_comv1/odm_specific/audioril-sec/include
+endif
 
 LOCAL_C_INCLUDES += \
 	$(TOP)/hardware/samsung_slsi-linaro/exynos/include/libaudio/audiohal_comv1 \
 	$(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/audiohal_comv1/odm_specific \
-	$(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/audiohal_comv1/odm_specific/audioril \
-	$(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/audiohal_comv1/odm_specific/audioril/include \
 	$(call include-path-for, audio-utils)
 
 LOCAL_HEADER_LIBRARIES := libhardware_headers

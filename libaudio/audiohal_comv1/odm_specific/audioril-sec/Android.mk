@@ -1,4 +1,5 @@
 # Copyright (C) 2014 The Android Open Source Project
+# Copyright (C) 2023 The LineageOS Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -13,14 +14,18 @@
 # limitations under the License.
 
 #
-# Audio RIL Interface for SIT
+# Audio RIL Interface for SEC
 #
 ifeq ($(BOARD_USE_AUDIOHAL_COMV1), true)
+ifneq ($(BOARD_USE_SITRIL), true)
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
 
-LOCAL_SRC_FILES := sitril_interface.c
+LOCAL_SRC_FILES := secril_interface.c
+
+LOCAL_C_INCLUDES += \
+	$(TOP)/hardware/samsung_slsi-linaro/exynos/include/libaudio/audiohal_comv1
 
 LOCAL_C_INCLUDES += ./include
 
@@ -32,4 +37,5 @@ LOCAL_PROPRIETARY_MODULE := true
 LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
+endif
 endif

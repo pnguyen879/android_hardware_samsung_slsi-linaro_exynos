@@ -1,5 +1,6 @@
 /*
  * Copyright (C) 2017 The Android Open Source Project
+ * Copyright (C) 2023 The LineageOS Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +18,7 @@
 #ifndef __AUDIO_RIL_H__
 #define __AUDIO_RIL_H__
 
-
-#include "./include/sitril-client.h"
-
+#include "./include/secril-client.h"
 
 // VoLTE Status : same as volte_status_t in VoiceManager
 enum {
@@ -28,12 +27,16 @@ enum {
     VOLTE_VIDEO
 };
 
-
 struct rilclient_intf {
     /* The pointer of interface library for RIL Client*/
     void *handle;
 
-    bool connection;
+    /* The SIPC RIL Client Handle */
+    /* This will be used as parameter of RIL CLient Functions */
+    void *client;
+
+    SoundType sound_type;
+
     bool extraVolume;
     bool wbAmr;
     bool emergencyMode;
@@ -51,17 +54,20 @@ struct rilclient_intf {
     bool call_forward;
 
     bool usbmic_state;
+    bool hac_mode;
 
     /* Function pointers */
-    int (*ril_open_client)(void);
-    int (*ril_close_client)(void);
-    int (*ril_register_callback)(void *, int *);
-    int (*ril_set_audio_volume)(int);
-    int (*ril_set_audio_path)(int);
+    void *(*ril_open_client)(void);
+    int (*ril_close_client)(void *);
+    int (*ril_connect)(void *);
+    int (*ril_is_connected)(void *);
+    int (*ril_disconnect)(void *);
+    int (*ril_set_audio_volume)(void *, SoundType, AudioPath);
+    int (*ril_set_audio_path)(void *, AudioPath, ExtraVolume);
     int (*ril_set_multi_mic)(int);
-    int (*ril_set_mute)(int);
-    int (*ril_set_audio_clock)(int);
-    int (*ril_set_audio_loopback)(int, int);
+    int (*ril_set_mute)(void *, int);
+    int (*ril_set_audio_clock)(void *, int);
+    int (*ril_set_tty_mode)(int);
 };
 
 #endif /* __AUDIO_RIL_H__ */
