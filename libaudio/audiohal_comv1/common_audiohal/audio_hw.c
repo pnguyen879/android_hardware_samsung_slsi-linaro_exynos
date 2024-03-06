@@ -310,6 +310,55 @@ static audio_usage adev_get_ausage_for_factory(struct audio_device *adev)
     return ausage;
 }
 
+// VoLTE Call Usage
+static audio_usage adev_get_ausage_for_volte(struct audio_device *adev)
+{
+    volte_status_t volte_status = VOLTE_OFF;
+    int samplingrate = VOICE_SR_NB;
+    audio_usage ausage = AUSAGE_NONE;
+
+    if (adev->voice) {
+        volte_status = voice_get_volte_status(adev->voice);
+        if (volte_status == VOLTE_VOICE) {
+            /* VoLTE Voice Call Usage */
+            samplingrate = voice_get_samplingrate(adev->voice);
+            switch (samplingrate) {
+                case VOICE_SR_SWB:
+                    ausage = AUSAGE_VOLTE_CALL_SWB;
+                    break;
+
+                case VOICE_SR_WB:
+                    ausage = AUSAGE_VOLTE_CALL_WB;
+                    break;
+
+                case VOICE_SR_NB:
+                default:
+                    ausage = AUSAGE_VOLTE_CALL_NB;
+                    break;
+            }
+        } else if (volte_status == VOLTE_VIDEO) {
+            /* VoLTE Video Call Usage */
+            samplingrate = voice_get_samplingrate(adev->voice);
+            switch (samplingrate) {
+                case VOICE_SR_SWB:
+                    ausage = AUSAGE_VOLTE_VT_CALL_SWB;
+                    break;
+
+                case VOICE_SR_WB:
+                    ausage = AUSAGE_VOLTE_VT_CALL_WB;
+                    break;
+
+                case VOICE_SR_NB:
+                default:
+                    ausage = AUSAGE_VOLTE_VT_CALL_NB;
+                    break;
+            }
+        }
+    }
+
+    return ausage;
+}
+
 // Voice Call or VoLTE Call Usage
 static audio_usage adev_get_ausage_for_call(struct audio_device *adev)
 {
@@ -322,10 +371,29 @@ static audio_usage adev_get_ausage_for_call(struct audio_device *adev)
         } else if (adev->incallmusic_on) {
             ausage = AUSAGE_INCALL_MUSIC;
             ALOGI("%s: incallmusic_on (%d)", __func__, adev->incallmusic_on);
-        } else if (adev->voice->hac_mode == HAC_MODE_ON) {
-            ausage = AUSAGE_VOICE_CALL_HAC;
-        } else {
-            ausage = AUSAGE_VOICE_CALL;  // Voice Call or VoLTE Call
+        }
+
+        /* Check Normal Call Usage(Voice Call or VoLTE Call) */
+        if (voice_get_volte_status(adev->voice) != VOLTE_OFF)
+            ausage = adev_get_ausage_for_volte(adev);
+        else {
+            int samplingrate = voice_get_samplingrate(adev->voice);
+            switch (samplingrate) {
+                case VOICE_SR_WB:
+                    if (adev->voice->hac_mode == HAC_MODE_ON)
+                        ausage = AUSAGE_VOICE_CALL_WB_HAC;
+                    else
+                        ausage = AUSAGE_VOICE_CALL_WB;
+                    break;
+
+                case VOICE_SR_NB:
+                default:
+                    if (adev->voice->hac_mode == HAC_MODE_ON)
+                        ausage = AUSAGE_VOICE_CALL_NB_HAC;
+                    else
+                        ausage = AUSAGE_VOICE_CALL_NB;
+                    break;
+            }
         }
     }
 
@@ -342,10 +410,37 @@ static audio_usage adev_get_ausage_for_voip(struct audio_device *adev)
     if (adev->voice && adev->voice->csvtcall) {
         ausage = AUSAGE_VIDEO_CALL;
     } else if (adev->voice && adev->voice->voip_wificalling) {
-        if (adev->voice->tty_mode != TTY_MODE_OFF)
+        if (adev->voice->tty_mode != TTY_MODE_OFF) {
             ausage = AUSAGE_AP_TTY;
-        else
-            ausage = AUSAGE_WIFI_CALL;
+        } else {
+            if (adev->primary_output->common.requested_devices & AUDIO_DEVICE_OUT_ALL_SCO) {
+                if (adev->voice->bluetooth_samplerate == WB_SAMPLING_RATE)
+                    ausage = AUSAGE_WIFI_CALL_WB;
+                else
+                    ausage = AUSAGE_WIFI_CALL_NB;
+            } else {
+                int vowifi_band = voice_get_vowifi_band(adev->voice);
+                switch (vowifi_band) {
+                    case VOICE_SR_SWB:
+                        ausage = AUSAGE_WIFI_CALL_SWB;
+                        break;
+
+                    case VOICE_SR_WB:
+                        ausage = AUSAGE_WIFI_CALL_WB;
+                        break;
+
+                    case VOICE_SR_NB:
+                    default:
+                        ausage = AUSAGE_WIFI_CALL_NB;
+                        break;
+                }
+            }
+        }
+    } else {
+        if (adev->active_input) {
+            if (adev->active_input->requested_source == AUDIO_SOURCE_MIC)
+                ausage = AUSAGE_VOIP_CALL;
+        }
     }
 
     return ausage;
