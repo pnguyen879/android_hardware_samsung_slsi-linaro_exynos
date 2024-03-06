@@ -440,7 +440,7 @@ void voice_deinit(struct voice_manager *voice)
     return ;
 }
 
-struct voice_manager* voice_init(void)
+struct voice_manager* voice_init(struct audio_device *adev)
 {
     struct voice_manager *voice = NULL;
     char property[PROPERTY_VALUE_MAX];
