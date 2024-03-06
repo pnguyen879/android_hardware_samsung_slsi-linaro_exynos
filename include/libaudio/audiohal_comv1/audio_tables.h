@@ -180,6 +180,7 @@ char * device_table[DEVICE_CNT] = {
     [DEVICE_SPEAKER_DEX_MIC]                = "dex-speaker-mic",
 
     [DEVICE_STEREO_MIC]                     = "dualmic",
+    [DEVICE_QUAD_MIC]                       = "multi-mic",
     [DEVICE_FULL_MIC]                       = "full-mic",
     [DEVICE_USB_FULL_MIC]                   = "usb-full-mic",
     [DEVICE_USB_HCO_MIC]                    = "usb-hco-mic",
