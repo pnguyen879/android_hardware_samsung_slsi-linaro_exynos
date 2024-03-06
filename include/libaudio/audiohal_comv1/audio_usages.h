@@ -41,7 +41,9 @@ typedef enum {
     AUSAGE_VOICE_CALL_HAC,
     AUSAGE_TTY,
     AUSAGE_INCALL_MUSIC,     //Music playback during CP call, sent to other device as CP Tx
-    AUSAGE_CPCALL_MAX = AUSAGE_INCALL_MUSIC,
+    AUSAGE_CALL_FORWARDING_PRIMARY,
+    AUSAGE_SPECTRO,
+    AUSAGE_CPCALL_MAX = AUSAGE_SPECTRO,
 
     AUSAGE_APCALL_MIN,
     AUSAGE_WIFI_CALL = AUSAGE_APCALL_MIN,
@@ -62,6 +64,8 @@ typedef enum {
     // Other Audio Usages
     AUSAGE_FM_RADIO_TUNER,         // for FM radio playback
     AUSAGE_FM_RADIO_CAPTURE, // for FM radio capture
+    AUSAGE_USB_FM_RADIO,
+    AUSAGE_REMOTE_MIC,
 
     // Voice WakeUp Usages
 #ifdef SUPPORT_STHAL_INTERFACE

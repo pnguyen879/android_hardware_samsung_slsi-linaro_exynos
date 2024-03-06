@@ -60,6 +60,8 @@ char * usage_table[AUSAGE_CNT] = {
     [AUSAGE_VOICE_CALL_HAC]         = "incall_hac",
     [AUSAGE_TTY]                    = "tty_mode",
     [AUSAGE_INCALL_MUSIC]           = "incall_music",
+    [AUSAGE_CALL_FORWARDING_PRIMARY] = "call_forwarding_primary",
+    [AUSAGE_SPECTRO]                = "call_spectro",
 
     [AUSAGE_WIFI_CALL]              = "wificall",
     [AUSAGE_VIDEO_CALL]             = "video_call",
@@ -75,6 +77,9 @@ char * usage_table[AUSAGE_CNT] = {
 
     [AUSAGE_FM_RADIO_TUNER]         = "fm_radio",
     [AUSAGE_FM_RADIO_CAPTURE]       = "fm_radio",
+    [AUSAGE_USB_FM_RADIO]           = "usbfm_radio",
+    [AUSAGE_REMOTE_MIC]             = "remote_mic",
+
 #ifdef SUPPORT_STHAL_INTERFACE
     [AUSAGE_HOTWORD_SEAMLESS]       = "hotword_seamless",
     [AUSAGE_HOTWORD_RECORD]         = "hotword_record",
@@ -101,6 +106,8 @@ char * usage_path_table[AUSAGE_CNT] = {
     [AUSAGE_VOICE_CALL_HAC]         = "incall_hac",
     [AUSAGE_TTY]                    = "tty_mode",
     [AUSAGE_INCALL_MUSIC]           = "incall_music",
+    [AUSAGE_CALL_FORWARDING_PRIMARY] = "call_forwarding_primary",
+    [AUSAGE_SPECTRO]                = "call_spectro",
 
     [AUSAGE_WIFI_CALL]              = "wificall",
     [AUSAGE_VIDEO_CALL]             = "video_call",
@@ -116,6 +123,8 @@ char * usage_path_table[AUSAGE_CNT] = {
 
     [AUSAGE_FM_RADIO_TUNER]         = "fm_radio",
     [AUSAGE_FM_RADIO_CAPTURE]       = "fm_radio",
+    [AUSAGE_USB_FM_RADIO]           = "usbfm_radio",
+    [AUSAGE_REMOTE_MIC]             = "remote_mic",
 
 #ifdef SUPPORT_STHAL_INTERFACE
     [AUSAGE_HOTWORD_SEAMLESS]       = "hotword_seamless",    //dummy definition not used
@@ -138,6 +147,8 @@ char * device_table[DEVICE_CNT] = {
     // Playback single output Devices
     [DEVICE_HANDSET]                        = "handset",
     [DEVICE_SPEAKER]                        = "speaker",
+    [DEVICE_SPEAKER_DEX]                    = "dex-speaker",
+    [DEVICE_SPEAKER_DUAL]                   = "dual-speaker",
     [DEVICE_HEADSET]                        = "headset",
     [DEVICE_HEADPHONE]                      = "headphone",
     [DEVICE_USB_HEADSET]                    = "usb-headset",
@@ -166,9 +177,12 @@ char * device_table[DEVICE_CNT] = {
     [DEVICE_HEADSET_MAIN_MIC]               = "headset-main-mic",
     [DEVICE_HEADPHONE_MIC]                  = "headphone-mic",
     [DEVICE_SPEAKER_MIC]                    = "speaker-mic",
+    [DEVICE_SPEAKER_DEX_MIC]                = "dex-speaker-mic",
 
     [DEVICE_STEREO_MIC]                     = "dualmic",
     [DEVICE_FULL_MIC]                       = "full-mic",
+    [DEVICE_USB_FULL_MIC]                   = "usb-full-mic",
+    [DEVICE_USB_HCO_MIC]                    = "usb-hco-mic",
     [DEVICE_HCO_MIC]                        = "hco-mic",
     [DEVICE_VCO_MIC]                        = "vco-mic",
 

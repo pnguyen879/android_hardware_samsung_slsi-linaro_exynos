@@ -26,6 +26,8 @@ typedef enum {
     // Playback single output Devices
     DEVICE_HANDSET                = 0,   // handset or receiver
     DEVICE_SPEAKER,
+    DEVICE_SPEAKER_DEX,
+    DEVICE_SPEAKER_DUAL,
     DEVICE_HEADSET,                      // headphone + mic
     DEVICE_HEADPHONE,                    // headphone or earphone
     DEVICE_USB_HEADSET,
@@ -54,9 +56,12 @@ typedef enum {
     DEVICE_HEADSET_MAIN_MIC,
     DEVICE_HEADPHONE_MIC,
     DEVICE_SPEAKER_MIC,
+    DEVICE_SPEAKER_DEX_MIC,
 
     DEVICE_STEREO_MIC,
     DEVICE_FULL_MIC,
+    DEVICE_USB_FULL_MIC,
+    DEVICE_USB_HCO_MIC,
     DEVICE_HCO_MIC,
     DEVICE_VCO_MIC,
 
