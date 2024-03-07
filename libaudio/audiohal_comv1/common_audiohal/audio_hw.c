@@ -537,7 +537,15 @@ device_type get_indevice_id_from_outdevice(struct audio_device *adev, device_typ
                 in = DEVICE_HEADPHONE_MIC;
                 break;
             case DEVICE_BT_SCO_HEADSET:
-                in = DEVICE_BT_SCO_HEADSET_MIC;
+                if (isAPCallMode(adev)) {
+                    if (adev->voice->bluetooth_nrec) {
+                        in = DEVICE_BT_SCO_HEADSET_MIC; // nrec is supported by BT side
+                    } else {
+                        in = DEVICE_BT_NREC_HEADSET_MIC;
+                    }
+                } else {
+                    in = DEVICE_BT_SCO_HEADSET_MIC;
+                }
                 break;
             case DEVICE_USB_HEADSET:
                 if (is_usb_in_device(adev->actual_capture_device))
