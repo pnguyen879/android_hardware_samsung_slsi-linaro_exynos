@@ -202,6 +202,7 @@ struct audio_device {
     int  pcmread_latency;
 
     bool update_offload_volume;
+    bool update_mmap_volume;
     int sound_speed;
     int sound_balance;
     int to_mono;

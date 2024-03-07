@@ -2113,6 +2113,21 @@ static int out_set_volume(struct audio_stream_out *stream, float left, float rig
             out->vol_right = right;
             out->direct_volume_enabled = true;
         }
+#ifdef SUPPORT_MMAP_HW_VOLUME_CONTROL
+    /*
+     * Hardware volume control can be supported only when RDMA is used for MMAP,
+     * ABOX_V3 onwards MMAP uses Virtual-DAI output node therefore volume control
+     * cannot be supported
+     */
+    } else if (out->common.stream_type == ASTREAM_PLAYBACK_MMAP) {
+        if (out->vol_left != left || out->vol_right != right || adev->update_mmap_volume) {
+            out->vol_left = left;
+            out->vol_right = right;
+            proxy_set_volume(adev->proxy, VOLUME_TYPE_MMAP, left, right);
+            if (adev->update_mmap_volume)
+                adev->update_mmap_volume = false;
+        }
+#endif
     } else{
         ALOGE("%s-%s: Don't support volume control for this stream",
               stream_table[out->common.stream_type], __func__);
@@ -4746,6 +4761,7 @@ static int adev_open(
 
     adev->pcmread_latency = 0;
     adev->update_offload_volume = false;
+    adev->update_mmap_volume = false;
     adev->current_devices = AUDIO_DEVICE_NONE;
 
     proxy_init_offload_effect_lib(adev->proxy);
