@@ -67,7 +67,9 @@ typedef enum {
 #endif
 
 // USB Playback and Capture
+#ifndef PREDEFINED_USB_PLAYBACK_DURATION
 #define PREDEFINED_USB_PLAYBACK_DURATION    10  // 10ms
+#endif
 #define PREDEFINED_USB_CAPTURE_DURATION     10  // 10ms
 
 #define LOW_LATENCY_CAPTURE_SAMPLE_RATE     48000
