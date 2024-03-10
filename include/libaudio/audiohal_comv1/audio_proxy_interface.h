@@ -151,6 +151,10 @@ void  proxy_set_apcall_txse(void);
 void  proxy_clear_apcall_txse(void);
 void  proxy_set_call_path_param(uint32_t set, uint32_t param, int32_t value);
 
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+bool proxy_is_bt_a2dp_ready(void);
+#endif
+
 // Audio Device Proxy Dump Function
 int   proxy_fw_dump(int fd);
 

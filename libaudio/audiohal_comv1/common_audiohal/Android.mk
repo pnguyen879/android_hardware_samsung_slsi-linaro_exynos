@@ -55,6 +55,10 @@ LOCAL_SHARED_LIBRARIES += libaudioproxy libaudio-ril
 LOCAL_CFLAGS += -Wno-unused-parameter -Wno-unused-variable -Wno-unused-function
 
 # Audio Feature based Configuration
+ifeq ($(BOARD_USE_BTA2DP_OFFLOAD),true)
+LOCAL_CFLAGS += -DSUPPORT_BTA2DP_OFFLOAD
+endif
+
 ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL),true)
 LOCAL_CFLAGS += -DSUPPORT_STHAL_INTERFACE
 endif

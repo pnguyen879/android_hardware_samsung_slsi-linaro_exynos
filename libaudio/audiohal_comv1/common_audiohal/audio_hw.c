@@ -723,6 +723,11 @@ device_type get_device_id(struct audio_device *adev, audio_devices_t devices)
                 case AUDIO_DEVICE_OUT_BLUETOOTH_SCO:
                 case AUDIO_DEVICE_OUT_BLUETOOTH_SCO_HEADSET:
                 case AUDIO_DEVICE_OUT_BLUETOOTH_SCO_CARKIT:     return DEVICE_BT_SCO_HEADSET;
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+                case AUDIO_DEVICE_OUT_BLUETOOTH_A2DP:
+                case AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_HEADPHONES:
+                case AUDIO_DEVICE_OUT_BLUETOOTH_A2DP_SPEAKER:   return DEVICE_BT_A2DP_HEADPHONE;
+#endif
                 case AUDIO_DEVICE_OUT_AUX_DIGITAL:              return DEVICE_AUX_DIGITAL;
                 case AUDIO_DEVICE_OUT_USB_DEVICE:
                 case AUDIO_DEVICE_OUT_USB_HEADSET:              return DEVICE_USB_HEADSET;
@@ -739,6 +744,10 @@ device_type get_device_id(struct audio_device *adev, audio_devices_t devices)
 
             if ((devices & AUDIO_DEVICE_OUT_ALL_SCO) && (devices & AUDIO_DEVICE_OUT_SPEAKER))
                 return DEVICE_SPEAKER_AND_BT_SCO_HEADSET;
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+            if ((devices & AUDIO_DEVICE_OUT_ALL_A2DP) && (devices & AUDIO_DEVICE_OUT_SPEAKER))
+                return DEVICE_SPEAKER_AND_BT_A2DP_HEADPHONE;
+#endif
             if ((devices & AUDIO_DEVICE_OUT_ALL_USB) && (devices & AUDIO_DEVICE_OUT_SPEAKER))
                 return DEVICE_SPEAKER_AND_USB_HEADSET;
         }
@@ -812,7 +821,12 @@ static modifier_type adev_get_modifier(struct audio_device *adev, device_type de
             else
                 type = MODIFIER_BT_SCO_RX_NB;
             break;
-
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+        case DEVICE_BT_A2DP_HEADPHONE:
+        case DEVICE_SPEAKER_AND_BT_A2DP_HEADPHONE:
+            type = MODIFIER_BT_A2DP_PLAYBACK;
+            break;
+#endif
         case DEVICE_BT_SCO_HEADSET_MIC:
         case DEVICE_BT_NREC_HEADSET_MIC:
             if (adev->voice && adev->voice->bluetooth_samplerate == WB_SAMPLING_RATE)
@@ -1793,7 +1807,9 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
         audio_devices_t requested_devices = atoi(value);
         audio_devices_t current_devices = out->common.requested_devices;
         bool need_routing = false;
-
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+        bool bypass_a2dp = false;
+#endif
         /*
          * AudioFlinger informs Audio path is this device.
          * AudioHAL has to decide to do actual routing or not.
@@ -1803,6 +1819,20 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                   stream_table[out->common.stream_type], __func__,
                   device_table[get_device_id(adev, current_devices)],
                   device_table[get_device_id(adev, requested_devices)]);
+
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+            /* To avoid a2dp to sco overlapping / BT device improper state
+             * check with BT lib about a2dp streaming support before routing
+             */
+            if ((requested_devices & AUDIO_DEVICE_OUT_ALL_A2DP) && !proxy_is_bt_a2dp_ready()) {
+                if (requested_devices & AUDIO_DEVICE_OUT_SPEAKER) {
+                    //combo usecase just by pass a2dp
+                    ALOGW("%s-%s: A2DP profile is not ready, routing to speaker only",
+                        stream_table[out->common.stream_type], __func__);
+                    bypass_a2dp = true;
+                }
+            }
+#endif
 
             /* Assign requested device to Output Stream */
             out->common.requested_devices = requested_devices;
@@ -1865,6 +1895,13 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                     pthread_mutex_lock(&out->common.lock);
                     pthread_mutex_lock(&adev->lock);
                 } else {
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+                    if (bypass_a2dp) {
+                        out->common.requested_devices = AUDIO_DEVICE_OUT_SPEAKER;
+                        adev_set_route((void *)out, AUSAGE_PLAYBACK, ROUTE, out->force);
+                        out->common.requested_devices = requested_devices;
+                    } else
+#endif
                     /* Do actual routing */
                     adev_set_route((void *)out, AUSAGE_PLAYBACK, ROUTE, out->force);
                 }
@@ -2170,6 +2207,14 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
                    stream_table[out->common.stream_type], __func__);
         } else if (!adev->is_playback_path_routed) {
             ALOGI("%s-%s: try to route for playback", stream_table[out->common.stream_type], __func__);
+#ifdef SUPPORT_BTA2DP_OFFLOAD
+            if (a2dp_combo) {
+                audio_devices_t dev = out->common.requested_devices;
+                out->common.requested_devices = AUDIO_DEVICE_OUT_SPEAKER;
+                adev_set_route((void *)out, AUSAGE_PLAYBACK, ROUTE, NON_FORCE_ROUTE);
+                out->common.requested_devices = dev;
+            } else
+#endif
             adev_set_route((void *)out, AUSAGE_PLAYBACK, ROUTE, NON_FORCE_ROUTE);
         }
         pthread_mutex_unlock(&adev->lock);
