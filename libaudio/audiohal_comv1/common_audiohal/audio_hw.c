@@ -2208,7 +2208,8 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
         } else if (!adev->is_playback_path_routed) {
             ALOGI("%s-%s: try to route for playback", stream_table[out->common.stream_type], __func__);
 #ifdef SUPPORT_BTA2DP_OFFLOAD
-            if (a2dp_combo) {
+            if ((out->common.requested_devices & AUDIO_DEVICE_OUT_ALL_A2DP) &&
+                (out->common.requested_devices & AUDIO_DEVICE_OUT_SPEAKER)) {
                 audio_devices_t dev = out->common.requested_devices;
                 out->common.requested_devices = AUDIO_DEVICE_OUT_SPEAKER;
                 adev_set_route((void *)out, AUSAGE_PLAYBACK, ROUTE, NON_FORCE_ROUTE);
