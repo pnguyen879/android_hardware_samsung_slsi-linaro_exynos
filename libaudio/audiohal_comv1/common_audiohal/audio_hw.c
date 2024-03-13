@@ -3511,24 +3511,22 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
                 update_call_stream(adev->primary_output, call_device, call_device);
                 pthread_mutex_lock(&adev->lock);
 
-                /* Changing Call Status */
+                /* Changing Voice Call Status */
                 voice_set_call_mode(adev->voice, false);
-
-                proxy_call_status(adev->proxy, false);
             } else if (mode == AUDIO_MODE_IN_CALL) {
                 /* Change from Normal/Ringtone Mode to Voice Call Mode */
                 /* We cannot start Voice Call right now because we don't know which device will be used.
                    So, we need to delay Voice Call start when get the routing information for Voice Call */
 
-                /* Changing Call Status */
+                /* Changing Voice Call Status */
                 voice_set_call_mode(adev->voice, true);
+            }
 
+            /* Updating Call Status to proxy */
+            if (mode == AUDIO_MODE_IN_CALL || mode == AUDIO_MODE_IN_COMMUNICATION)
                 proxy_call_status(adev->proxy, true);
-            }
-
-            if (mode == AUDIO_MODE_NORMAL || mode == AUDIO_MODE_IN_COMMUNICATION) {
+            else
                 proxy_call_status(adev->proxy, false);
-            }
 
             if(adev->previous_amode == AUDIO_MODE_IN_COMMUNICATION && mode == AUDIO_MODE_NORMAL){
                 if(adev->active_input && (adev->active_input->common.stream_status > STATUS_STANDBY) &&
