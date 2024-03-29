@@ -3942,6 +3942,7 @@ static int adev_open_input_stream(
     if ((flags & AUDIO_INPUT_FLAG_FAST) != 0) {
         if (isCallMode(adev) && config->sample_rate != LOW_LATENCY_CAPTURE_SAMPLE_RATE) {
             flags &= ~AUDIO_INPUT_FLAG_FAST;
+            flags |= AUDIO_INPUT_FLAG_VOIP_TX;
             ALOGD("device-%s: Denied to open Low Latency input. flags changed(%#x)", __func__, flags);
         }
     }
