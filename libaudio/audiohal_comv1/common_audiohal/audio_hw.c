@@ -959,8 +959,10 @@ void update_call_stream(struct stream_out *out, audio_devices_t current_devices,
     pthread_mutex_lock(&adev->lock);
     if ((device_changed && adev->voice && voice_is_call_active(adev->voice)) ||
          adev->active_playback_ausage == AUSAGE_INCALL_MUSIC) {
-        if (!adev->voice->mute_voice)
+        if (!adev->voice->mute_voice) {
             voice_set_rx_mute(adev->voice, true);
+            proxy_set_volume(adev->proxy, VOLUME_TYPE_CALL_RX_MUTE, true, true);
+        }
 
         voice_set_call_active(adev->voice, false);
         proxy_stop_voice_call(adev->proxy);
@@ -1900,7 +1902,7 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
                 }
 
                 if (output_drives_call(adev, out) && isCallMode(adev)) {
-                    proxy_set_volume(adev->proxy, VOLUME_TYPE_CALL_MUTE, adev->mic_mute, adev->mic_mute);
+                    proxy_set_volume(adev->proxy, VOLUME_TYPE_CALL_TX_MUTE, adev->mic_mute, adev->mic_mute);
                     ALOGI("%s-%s: Call Mute status updated with %d", stream_table[out->common.stream_type],
                                                                      __func__, adev->mic_mute);
                 }
@@ -3555,7 +3557,7 @@ static int adev_set_mic_mute(struct audio_hw_device *dev, bool state)
     adev->mic_mute = state;
 
     if (isCallMode(adev) == true)
-        proxy_set_volume(adev->proxy, VOLUME_TYPE_CALL_MUTE, state, state);
+        proxy_set_volume(adev->proxy, VOLUME_TYPE_CALL_TX_MUTE, state, state);
 
     ALOGD("device-%s: set MIC Mute to (%d)", __func__, (int)state);
     pthread_mutex_unlock(&adev->lock);

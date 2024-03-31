@@ -23,7 +23,8 @@ enum {
     VOLUME_TYPE_OFFLOAD = 0,
     VOLUME_TYPE_MMAP,
     VOLUME_TYPE_CALL,
-    VOLUME_TYPE_CALL_MUTE,
+    VOLUME_TYPE_CALL_TX_MUTE,
+    VOLUME_TYPE_CALL_RX_MUTE,
 };
 
 /* Compress Function Type */
