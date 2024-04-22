@@ -89,6 +89,7 @@ char * usage_table[AUSAGE_CNT] = {
     [AUSAGE_FM_RADIO_CAPTURE]       = "fm_radio",
     [AUSAGE_USB_FM_RADIO]           = "usbfm_radio",
     [AUSAGE_REMOTE_MIC]             = "remote_mic",
+    [AUSAGE_LISTENBACK]             = "listenback",
 
 #ifdef SUPPORT_STHAL_INTERFACE
     [AUSAGE_HOTWORD_SEAMLESS]       = "hotword_seamless",
@@ -145,6 +146,7 @@ char * usage_path_table[AUSAGE_CNT] = {
     [AUSAGE_FM_RADIO_CAPTURE]       = "fm_radio",
     [AUSAGE_USB_FM_RADIO]           = "usbfm_radio",
     [AUSAGE_REMOTE_MIC]             = "remote_mic",
+    [AUSAGE_LISTENBACK]             = "listenback",
 
 #ifdef SUPPORT_STHAL_INTERFACE
     [AUSAGE_HOTWORD_SEAMLESS]       = "hotword_seamless",    //dummy definition not used

@@ -76,6 +76,7 @@ typedef enum {
     AUSAGE_FM_RADIO_CAPTURE, // for FM radio capture
     AUSAGE_USB_FM_RADIO,
     AUSAGE_REMOTE_MIC,
+    AUSAGE_LISTENBACK,
 
     // Voice WakeUp Usages
 #ifdef SUPPORT_STHAL_INTERFACE
