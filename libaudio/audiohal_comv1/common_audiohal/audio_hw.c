@@ -4766,8 +4766,6 @@ static int adev_open(
     adev->update_mmap_volume = false;
     adev->current_devices = AUDIO_DEVICE_NONE;
 
-    proxy_init_offload_effect_lib(adev->proxy);
-
     pthread_mutex_unlock(&adev->lock);
 
     /* Sets Structure audio_hw_device for return. */

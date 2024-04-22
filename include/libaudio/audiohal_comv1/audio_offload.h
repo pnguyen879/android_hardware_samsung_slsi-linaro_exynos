@@ -17,8 +17,6 @@
 #ifndef __EXYNOS_AUDIOHAL_OFFLOAD_H__
 #define __EXYNOS_AUDIOHAL_OFFLOAD_H__
 
-#define OFFLOAD_EFFECT_LIBRARY_PATH "/system/lib/soundfx/libaudioeffectoffload.so"
-
 /**
  ** Compress Offload Message List
  **/
