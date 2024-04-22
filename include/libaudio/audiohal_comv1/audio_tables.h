@@ -171,6 +171,7 @@ char * device_table[DEVICE_CNT] = {
     [DEVICE_SPEAKER]                        = "speaker",
     [DEVICE_SPEAKER_DEX]                    = "dex-speaker",
     [DEVICE_SPEAKER_DUAL]                   = "dual-speaker",
+    [DEVICE_SPEAKER_GAMING]                 = "gaming-speaker",
     [DEVICE_HEADSET]                        = "headset",
     [DEVICE_HEADPHONE]                      = "headphone",
     [DEVICE_USB_HEADSET]                    = "usb-headset",
@@ -200,6 +201,7 @@ char * device_table[DEVICE_CNT] = {
     [DEVICE_HEADPHONE_MIC]                  = "headphone-mic",
     [DEVICE_SPEAKER_MIC]                    = "speaker-mic",
     [DEVICE_SPEAKER_DEX_MIC]                = "dex-speaker-mic",
+    [DEVICE_SPEAKER_GAMING_MIC]             = "gaming-speaker-mic",
 
     [DEVICE_STEREO_MIC]                     = "dualmic",
     [DEVICE_QUAD_MIC]                       = "multi-mic",
