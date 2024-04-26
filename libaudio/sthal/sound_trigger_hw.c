@@ -1822,6 +1822,31 @@ exit:
     return ret;
 }
 
+__attribute__ ((visibility ("default")))
+int sound_trigger_notify_ahal_record_status(int state)
+{
+    struct sound_trigger_device *stdev = &g_stdev;
+    int ret = 0;
+
+    switch (state) {
+    case RECORDING_STOP:
+        /* no further impl for now */
+        break;
+    case RECORDING_START:
+        ALOGI("%s: audiohal is about to start recording", __func__);
+        if (stdev->is_mic_configured)
+            stdev_vts_set_power(stdev, 0);
+
+        break;
+    default:
+        ALOGE("%s: state(%d) is not defined", __func__, state);
+        ret = -1;
+        break;
+    }
+
+    return ret;
+}
+
 static int stdev_close(hw_device_t *device)
 {
     struct sound_trigger_device *stdev = (struct sound_trigger_device *)device;

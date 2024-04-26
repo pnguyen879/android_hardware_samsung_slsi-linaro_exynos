@@ -115,6 +115,11 @@ typedef enum {
 }VOICECALL_STATE;
 
 typedef enum {
+    RECORDING_STOP = 0,
+    RECORDING_START,
+} AUDIOHAL_STATE;
+
+typedef enum {
         RECOG_CB_NONE           = 0,    // Recognition event callback function not called
         RECOG_CB_STARTED        = 1,    // Recognition event received
         RECOG_CB_CALLED         = 2,    //Recognition event callback of STHW Service Called
