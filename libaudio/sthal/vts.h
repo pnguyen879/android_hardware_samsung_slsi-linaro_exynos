@@ -30,6 +30,8 @@
 #define VTSDRV_MISC_IOCTL_WRITE_ODMVOICE	_IOW('V', 0x00, int)
 #define VTSDRV_MISC_IOCTL_WRITE_GOOGLE		_IOW('V', 0x01, int)
 /* Google model binary size is used, as this is greater then SVoice model size */
+#ifndef VTSDRV_MISC_MODEL_BIN_MAXSZ
 #define VTSDRV_MISC_MODEL_BIN_MAXSZ		0xB500
+#endif
 
 #endif /* _UAPI__SOUND_VTS_H */
