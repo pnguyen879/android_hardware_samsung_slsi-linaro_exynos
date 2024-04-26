@@ -15,7 +15,6 @@
 #
 # VTS Unit Test Console application
 #
-ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL), STHAL_TEST)
 LOCAL_PATH := $(call my-dir)
 
 include $(CLEAR_VARS)
@@ -27,10 +26,8 @@ LOCAL_SRC_FILES := \
 
 LOCAL_C_INCLUDES += \
     external/tinyalsa/include \
-    $(TOP)/hardware/samsung_slsi-linaro/exynos/libaudio/sthal
-
-LOCAL_C_INCLUDES += \
-    $(TOP)/device/samsung/$(TARGET_BOOTLOADER_BOARD_NAME)/conf
+    $(TOP)/hardware/samsung_slsi/modules/libaudio/sthal \
+    $(TOP)/device/samsung/$(PRODUCT_DEVICE)/conf
 
 LOCAL_SHARED_LIBRARIES := \
     liblog \
@@ -43,7 +40,4 @@ ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL_MMAP),true)
 LOCAL_CFLAGS += -DMMAP_INTERFACE_ENABLED
 endif
 
-LOCAL_MODULE_TAGS := optional
-
 include $(BUILD_EXECUTABLE)
-endif

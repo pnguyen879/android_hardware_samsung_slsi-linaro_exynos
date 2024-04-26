@@ -30,15 +30,16 @@
 /* Model index */
 #define MAX_SOUND_MODELS    2
 #define HOTWORD_INDEX       0
-#define ODMVOICE_INDEX      1
+#define SVOICE_INDEX        1
 #define HANDLE_NONE         -1
 
-#define MODEL_CONTROL_COUNT     3
+#define MODEL_START_CONTROL_COUNT       3
+#define MODEL_STOP_CONTROL_COUNT        2
 #define MODEL_BACKLOG_CONTROL_COUNT     1
 
 static const struct sound_trigger_properties hw_properties = {
     "Samsung SLSI", // implementor
-    "Exynos Primary SoundTrigger HAL, OK Google and ODMVoice", // description
+    "Exynos Primary SoundTrigger HAL, OK Google and SVoice", // description
     1, // version
     { 0x1817de20, 0xfa3b, 0x11e5, 0xbef2, { 0x00, 0x02, 0xa5, 0xd5, 0xc5, 0x1b } }, // uuid
     2, // max_sound_models
@@ -52,6 +53,25 @@ static const struct sound_trigger_properties hw_properties = {
     0 // power_consumption_mw
 };
 
+static struct sound_trigger_properties_extended_1_3 hw_properties_1_3 = {
+    {SOUND_TRIGGER_DEVICE_API_VERSION_1_3, 320}, // API version, rough total size
+    {"Samsung SLSI", // implementor
+    "Exynos Primary SoundTrigger HAL", // description
+    1, // version
+    { 0x1817de20, 0xfa3b, 0x11e5, 0xbef2, { 0x00, 0x02, 0xa5, 0xd5, 0xc5, 0x1b } }, // uuid
+    2, // max_sound_models
+    1, // max_key_phrases
+    1, // max_users
+    RECOGNITION_MODE_VOICE_TRIGGER, // recognition_modes
+    true, // capture_transition
+    0, // max_buffer_ms
+    false, // concurrent_capture
+    false, // trigger_in_event
+    0}, // power_consumption_mw
+    "374236809, 4ac4bfe8-a4c9-3f5c-8f02-6db7c7123cb6", // supportedModelArch
+    0 // audioCapabilities
+};
+
 typedef enum {
        VTS_MAIN_MIC         = 0,    //Main mic
        VTS_HEADSET_MIC      = 1,    //Headset mic
@@ -63,22 +83,22 @@ typedef enum {
 }VTS_RECOGNIZE_STATE;
 
 typedef enum {
-       ODMVOICE_UNKNOWN_MODE			= 0,    //None
-       ODMVOICE_RESERVED1_MODE			= 1,    //Reserved1 mode
-       ODMVOICE_RESERVED2_MODE			= 2,    //Reserved2 mode
-       ODMVOICE_TRIGGER_MODE			= 3,    //ODM voice trigger mode
-}ODMVOICE_MODEL_MODE;
+       SVOICE_UNKNOWN_MODE          = 0,    //None
+       SVOICE_BIXBY_MODE            = 1,    //Bixby (LPSD + voice trigger)
+       SVOICE_LPSD_MODE             = 2,    //LPSD (babycry/doorbell)
+       SVOICE_BIXBY_ALWAYS_MODE     = 3,    //Bixby (LPSD + voice trigger)
+}SVOICE_MODEL_MODE;
 
 typedef enum {
        VTS_MODE_OFF                     = 0,    //default is off
-       VTS_MODE_RESERVED1_ON            = 1,    // ODM specific trigger mode1
-       VTS_MODE_RESERVED2_ON            = 2,    //ODM specific trigger mode2
-       VTS_MODE_ODMVOICE_TRIGGER_ON     = 3,    //ODM key phrase Detection (Trigger)
-       VTS_MODE_GOOGLE_TRIGGER_ON       = 4,    //Google key phrase Detection (Trigger)
-       VTS_MODE_SENSORY_TRIGGER_ON      = 5,    //sensory key phrase Detection (Trigger)
-       VTS_MODE_RESERVED1_OFF           = 6,    //OFF: ODM specific trigger mode1
-       VTS_MODE_RESERVED2_OFF           = 7,    //OFF: ODM specific trigger mode2
-       VTS_MODE_ODMVOICE_TRIGGER_OFF    = 8,    //OFF: ODM key phrase Detection (Trigger)
+       VTS_MODE_VOICE_TRIGGER_ON        = 1,    //Both LPSD & Trigger are enabled (Voice trigger mode)
+       VTS_MODE_SOUND_DETECT_ON         = 2,    //Low Power sound Detect only(Babycrying mode)
+       VTS_MODE_VT_ALWAYS_ON            = 3,    //VTS key phrase Detection only(Trigger)
+       VTS_MODE_GOOGLE_TRIGGER_ON       = 4,    //Google key phrase Detection only(Trigger)
+       VTS_MODE_SENSORY_TRIGGER_ON      = 5,    //sensory key phrase Detection only(Trigger)
+       VTS_MODE_VOICE_TRIGGER_OFF       = 6,    //OFF: Both LPSD & Trigger are enabled (Voice trigger mode)
+       VTS_MODE_SOUND_DETECT_OFF        = 7,    //OFF: Low Power sound Detect only(Babycrying mode)
+       VTS_MODE_VT_ALWAYS_OFF           = 8,    //OFF: VTS key phrase Detection only(Trigger)
        VTS_MODE_GOOGLE_TRIGGER_OFF      = 9,    //OFF: Google key phrase Detection
        VTS_MODE_SENSORY_TRIGGER_OFF     = 10,    //OFF: sensory key phrase Detection
        VTS_MODE_COUNT,
@@ -123,46 +143,44 @@ char *model_recognize_start_ctlname[] = {
     "VTS VoiceTrigger Value",
 };
 
+// Delete Trigger Value setting in the stop control
+// : unnecessary and can cause abnormal operation of the firmware
 char *model_recognize_stop_ctlname[] = {
     "VTS Active Keyphrase",
-    "VTS VoiceTrigger Value",
     "VTS VoiceRecognization Mode",
 };
 
-int odmvoice_reserved1recognize_start_ctlvalue[] = {
+int svoice_bixbyrecognize_start_ctlvalue[] = {
     0,  //"VTS Active Keyphrase",
-    VTS_MODE_RESERVED1_ON,  //"VTS Execution Mode",
+    VTS_MODE_VOICE_TRIGGER_ON,  //"VTS Execution Mode",
     1800, //back log size from trigger point
 };
 
-int odmvoice_reserved1recognize_stop_ctlvalue[] = {
+int svoice_bixbyrecognize_stop_ctlvalue[] = {
     0, //"VTS Active Keyphrase",
-    0, //back log size from trigger point
-    VTS_MODE_RESERVED1_OFF, //"VTS Execution Mode",
+    VTS_MODE_VOICE_TRIGGER_OFF, //"VTS Execution Mode",
 };
 
-int odmvoice_reserved2recognize_start_ctlvalue[] = {
+int svoice_lpsdrecognize_start_ctlvalue[] = {
     0,  //"VTS Active Keyphrase",
-    VTS_MODE_RESERVED2_ON,  //"VTS Execution Mode",
+    VTS_MODE_SOUND_DETECT_ON,  //"VTS Execution Mode",
     0, //back log size from trigger point
 };
 
-int odmvoice_reserved2recognize_stop_ctlvalue[] = {
+int svoice_lpsdrecognize_stop_ctlvalue[] = {
     0, //"VTS Active Keyphrase",
-    0, //back log size from trigger point
-    VTS_MODE_RESERVED2_OFF, //"VTS Execution Mode",
+    VTS_MODE_SOUND_DETECT_OFF, //"VTS Execution Mode",
 };
 
-int odmvoice_triggerrecognize_start_ctlvalue[] = {
+int svoice_bixbyalwaysrecognize_start_ctlvalue[] = {
     0,  //"VTS Active Keyphrase",
-    VTS_MODE_ODMVOICE_TRIGGER_ON,  //"VTS Execution Mode",
+    VTS_MODE_VT_ALWAYS_ON,  //"VTS Execution Mode",
     1800, //back log size from trigger point
 };
 
-int odmvoice_triggerrecognize_stop_ctlvalue[] = {
+int svoice_bixbyalwaysrecognize_stop_ctlvalue[] = {
     0, //"VTS Active Keyphrase",
-    0, //back log size from trigger point
-    VTS_MODE_ODMVOICE_TRIGGER_ON, //"VTS Execution Mode",
+    VTS_MODE_VT_ALWAYS_OFF, //"VTS Execution Mode",
 };
 
 int hotword_recognize_start_ctlvalue[] = {
@@ -173,7 +191,6 @@ int hotword_recognize_start_ctlvalue[] = {
 
 int hotword_recognize_stop_ctlvalue[] = {
     1, //"VTS Active Keyphrase",
-    0, //back log size from trigger point
     VTS_MODE_GOOGLE_TRIGGER_OFF, //"VTS Execution Mode",
 };
 
@@ -195,6 +212,8 @@ struct sound_trigger_device {
     void *sound_model_cookies[MAX_SOUND_MODELS];
     pthread_t callback_thread;
     pthread_mutex_t lock;
+    pthread_mutex_t trigger_lock;
+    pthread_mutex_t recording_lock;
     int send_socket;
     int term_socket;
     int uevent_socket;
@@ -221,12 +240,13 @@ struct sound_trigger_device {
     struct pcm *recording_pcm;
 
     int backlog_size;
-    int odmvoicemodel_mode;
+    int svoicemodel_mode;
 
     int voicecall_state;
     int recog_cbstate;
     int model_execstate[MAX_SOUND_MODELS];
     sound_model_handle_t model_stopfailedhandles[MAX_SOUND_MODELS];
+    int is_generic;
 };
 
 #endif  // __EXYNOS_SOUNDTRIGGERHAL_H__

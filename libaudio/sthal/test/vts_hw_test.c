@@ -43,8 +43,10 @@
 
 #include"sound_trigger_hw.h"
 #ifdef MMAP_INTERFACE_ENABLED
-#include"vts.h"
+#include "vts.h"
+#include "soundtrigger_conf.h"
 #endif
+#include "soundtrigger_play_conf.h"
 
 #define UEVENT_MSG_LEN          64*1024
 
@@ -59,39 +61,67 @@ typedef enum {
 } VTS_RECORD_STATE;
 
 typedef enum {
-    VTS_RESERVED2_STOPPED_STATE,
-    VTS_RESERVED2_STARTED_STATE,
-} VTS_ODMRSVD2_STATE;
+    VTS_LPSD_STOPPED_STATE,
+    VTS_LPSD_STARTED_STATE,
+} VTS_LPSD_STATE;
+
+typedef enum {
+    VTS_PLAY_STOPPED_STATE,
+    VTS_PLAY_STARTED_STATE,
+} VTS_PLAY_STATE;
+
+typedef enum {
+    PLAY_BACK_STOPPED_STATE,
+    PLAY_BACK_STARTED_STATE,
+} PLAY_BACK_STATE;
 
 typedef enum {
     VTS_TRIGGERED_CAPTURE,
     VTS_NORMAL_CAPTURE,
 } VTS_CAP_MODE;
 
+typedef enum {
+    BIXBY_MODEL = 1,
+    GOOGLE_MODEL
+} VTS_MODEL_TYPE;
+
 /* Sound model binaries */
 #define SOUND_MODEL_OKGOOGLE_BINARY         "/data/voice_dva_okgoogle.bin"
-#define SOUND_MODEL_ODMVOICE_BINARY           "/data/voice_dva_odmvoice.bin"
+#define SOUND_MODEL_SVOICE_BINARY           "/data/voice_dva_svoice.bin"
 
 #define VTS_TRIGGER_CAPTURE_OUTPUT  "/sdcard/vts-trigger-cap.wav"
 #define VTS_NORMAL_CAPTURE_OUTPUT  "/sdcard/vts-normal-cap.wav"
 
 #define VTS_STREAMING_BUFFER_SIZE  4800 //(4 * 1024)
-#define NUM_OF_SAMPLES_TO_CAPTURE 100
+#define PLAY_BACK_BUFFER_SIZE VTS_STREAMING_BUFFER_SIZE*2
+#define NUM_OF_SAMPLES_TO_CAPTURE 10
+#define LOOPBACK_BUFFER_SIZE VTS_STREAMING_BUFFER_SIZE*NUM_OF_SAMPLES_TO_CAPTURE
+
+char * loopback_stream;
 
 struct vts_hw_device {
     VTS_HW_STATE vts_state;
     VTS_RECORD_STATE vts_rec_state;
-    VTS_ODMRSVD2_STATE vts_odmrsvd2_state;
+    VTS_LPSD_STATE vts_lpsd_state;
+    PLAY_BACK_STATE play_back_state;
+    VTS_MODEL_TYPE vts_model_type;
     pthread_mutex_t lock;
     int send_sock;
     int term_sock;
     bool thread_exit;
     bool rec_thread_exit;
-    bool odmrsvd2_thread_exit;
+    bool play_thread_exit;
+    bool lpsd_thread_exit;
     pthread_t callback_thread;
     pthread_t rec_thread;
-    pthread_t odmrsvd2_thread;
-    bool model_loaded;
+    pthread_t play_thread;
+    pthread_t lpsd_thread;
+    bool start_loopback_play;
+    int model_loaded;
+
+    VTS_PLAY_STATE vts_play_state;
+    bool vts_play_thread_exit;
+    pthread_t vts_play_thread;
 };
 
 #define ID_RIFF 0x46464952
@@ -125,9 +155,23 @@ int   vtsdev_fd = -1;
 void *mapped_addr = NULL;
 #endif
 
+enum state {
+    MENU_START_BIXBY_RECOGNITION = 1,
+    MENU_START_GOOGLE_RECOGNITION,
+    MENU_STOP_RECOGNITION,
+    MENU_START_RECORD,
+    MENU_STOP_RECORD,
+    MENU_START_PLAY,
+    MENU_STOP_PLAY,
+    MENU_START_PLAYBACK,
+    MENU_STOP_PLAYBACK,
+    MENU_EXIT
+};
+
 void vts_recognition_stop(struct vts_hw_device *vts_dev);
-void vts_odmrsvd2_stop(struct vts_hw_device *vts_dev);
+void vts_lpsd_stop(struct vts_hw_device *vts_dev);
 void vts_record_stop(struct vts_hw_device *vts_dev);
+void playback_stop(struct vts_hw_device *vts_dev);
 
 static int dmic_usagecnt = 0;
 
@@ -141,9 +185,10 @@ int set_mixer_ctrls(
 {
     int i = (reverse ? (ctrl_count - 1): 0);
     int ret = 0;
+    int temp[2] = {1,1};
     struct mixer_ctl *mixerctl = NULL;
 
-    printf("%s, path: %s", __func__, path_name[0]);
+    printf("%s, path: %s \n", __func__, path_name[0]);
 
     if (mixer_handle) {
         //for (i=0; i < ctrl_count; i++) {
@@ -181,12 +226,67 @@ int set_mixer_ctrls(
         printf("%s: Failed to open mixer\n", __func__);
         return -EINVAL;
     }
-
     return ret;
 }
 
+int set_mixer_ctrls_array(
+        struct mixer *mixer_handle,
+        char *path_name[],
+        int *path_ctlvalue[],
+        int ctrl_count,
+        bool reverse,
+        int value_cnt[])
+{
+    int i = (reverse ? (ctrl_count - 1): 0);
+    int j = 0;
+    int ret = 0;
+    int buf[3];
+    struct mixer_ctl *mixerctl = NULL;
+
+    printf("%s, path: %s\n", __func__, path_name[0]);
+
+    if (mixer_handle) {
+        while(ctrl_count) {
+            //printf("%s, ctrl_count: %d Loop index: %d", __func__, ctrl_count, i);
+            /* Get required control from mixer */
+            mixerctl = mixer_get_ctl_by_name(mixer_handle, path_name[i]);
+            if (mixerctl) {
+                printf("value count : %d \n", value_cnt[i]);
+                for(j = 0; j<value_cnt[i]; j++){
+                    buf[j] = path_ctlvalue[i][j];
+                }
+                /* Enable the control */
+                ret = mixer_ctl_set_array(mixerctl, buf, value_cnt[i]);
+                if (ret) {
+                    printf("%s: %s Failed to configure\n", __func__, path_name[i]);
+                    ret = -EINVAL;
+                    break;
+                } else {
+                    for(j = 0; j<value_cnt[i]; j++){
+                        printf("%s: %s %d configured value: %d\n", __func__, path_name[i],j,buf[j]);
+                    }
+                }
+             } else {
+                printf("%s: %s control doesn't exist\n", __func__, path_name[i]);
+                ret = -EINVAL;
+                break;
+            }
+            ctrl_count--;
+            if (reverse)
+                i--;
+            else
+                i++;
+        }
+    } else {
+        printf("%s: Failed to open mixer\n", __func__);
+        return -EINVAL;
+    }
+    return ret;
+}
+
+
 #ifdef MMAP_INTERFACE_ENABLED
-static void load_modelbinary(char *data, int len)
+static void load_modelbinary(char *data, int len, int model)
 {
     printf("%s: Size: %d\n", __func__, len);
 
@@ -199,11 +299,16 @@ static void load_modelbinary(char *data, int len)
         printf("%s: MMAP buffer overflow Model Binary size greater then mapped size !!!\n", __func__);
     }
 
-    /* Update model binary inforation to VTS misc driver */
-    if (ioctl(vtsdev_fd, VTSDRV_MISC_IOCTL_WRITE_ODMVOICE, &len) < 0) {
-        printf("%s: Failed to update model binary size\n", __func__);
+    if(model == BIXBY_MODEL) {
+        /* Update model binary inforation to VTS misc driver */
+        if (ioctl(vtsdev_fd, VTSDRV_MISC_IOCTL_WRITE_SVOICE, &len) < 0) {
+            printf("%s: Failed to update model binary size\n", __func__);
+        }
+    } else {
+        if (ioctl(vtsdev_fd, VTSDRV_MISC_IOCTL_WRITE_GOOGLE, &len) < 0) {
+            printf("%s: Failed to update model binary size\n", __func__);
+        }
     }
-
     return;
 }
 #endif
@@ -233,6 +338,66 @@ static void sysfs_write(const char *path, char *data, int len)
 
     close(fd);
     return;
+}
+
+int set_playback_dmic_ctrls(int flag)
+{
+    int ret = EXIT_SUCCESS;
+    char **active_spkc_ctrls = NULL;
+    int *ctrl_spk_values = NULL;
+    char **not_active_spkc_ctrls = NULL;
+    int *not_ctrl_spk_values = NULL;
+
+    char **active_spkc_array_ctrls = NULL;
+    int **ctrl_spk_array_values = NULL;
+    char **not_active_array_spkc_ctrls = NULL;
+    int **not_ctrl_spk_array_values = NULL;
+    int *ctrl_spk_array_cnt = NULL;
+    if (vtsMixerHandle) {
+        if (!flag) {
+            if (dmic_usagecnt) {
+                dmic_usagecnt--;
+                printf("Dmic Disabled usage count %d \n", dmic_usagecnt);
+            } else {
+                printf("Dmic usage count is Zero \n");
+                return ret;
+            }
+            not_active_array_spkc_ctrls = headset_spk_ctlname_arry;
+            not_ctrl_spk_array_values = headset_spk_not_ctlvalue_arry;
+            ctrl_spk_array_cnt = headset_spk_ctlvalue_cnt_arry;
+            if (set_mixer_ctrls_array(vtsMixerHandle, not_active_array_spkc_ctrls, not_ctrl_spk_array_values, MAIN_SPKC_CONTROL_ARRAY_COUNT, !flag, ctrl_spk_array_cnt)) {
+                printf("%s: %s SPK Array dis control configuration Failed", __func__, flag ? "Enabling" : "Disabling");
+                mixer_close(vtsMixerHandle);
+                vtsMixerHandle = NULL;
+                return -EINVAL;
+            }
+            printf("%s: %s SPK Array dis Controls ", __func__, flag ? "Enable" : "Disable");
+        } else {
+            if (!dmic_usagecnt) {
+                active_spkc_ctrls = headset_spk_ctlname;
+                ctrl_spk_values = headset_spk_ctlvalue;
+                if (set_mixer_ctrls(vtsMixerHandle, active_spkc_ctrls, ctrl_spk_values, MAIN_SPKC_CONTROL_COUNT, !flag)) {
+                    printf("%s: %s SPK control configuration Failed", __func__, flag ? "Enabling" : "Disabling");
+                    mixer_close(vtsMixerHandle);
+                    vtsMixerHandle = NULL;
+                    return -EINVAL;
+                 }
+                 printf("%s: %s SPK Controls ", __func__, flag ? "Enable" : "Disable");
+
+                 active_spkc_array_ctrls = headset_spk_ctlname_arry;
+                 ctrl_spk_array_values = headset_spk_ctlvalue_arry;
+                 ctrl_spk_array_cnt = headset_spk_ctlvalue_cnt_arry;
+                 if (set_mixer_ctrls_array(vtsMixerHandle, active_spkc_array_ctrls, ctrl_spk_array_values, MAIN_SPKC_CONTROL_ARRAY_COUNT, !flag, ctrl_spk_array_cnt)) {
+                     printf("%s: %s SPK Array control configuration Failed", __func__, flag ? "Enabling" : "Disabling");
+                     mixer_close(vtsMixerHandle);
+                     vtsMixerHandle = NULL;
+                     return -EINVAL;
+                 }
+                printf("%s: %s SPK Array Controls ", __func__, flag ? "Enable" : "Disable");
+            }
+        }
+    }
+    return ret;
 }
 
 int set_dmic_ctrls(int flag)
@@ -283,27 +448,29 @@ void check_vts_state(struct vts_hw_device *vts_dev)
 {
     if (vts_dev->vts_state == VTS_RECOGNITION_STARTED_STATE) {
         vts_recognition_stop(vts_dev);
-    } else if (vts_dev->vts_odmrsvd2_state == VTS_RESERVED2_STARTED_STATE) {
-        vts_odmrsvd2_stop(vts_dev);
+    } else if (vts_dev->vts_lpsd_state == VTS_LPSD_STARTED_STATE) {
+        vts_lpsd_stop(vts_dev);
     } else if (vts_dev->vts_rec_state == VTS_RECORD_STARTED_STATE) {
         vts_record_stop(vts_dev);
+    } else if (vts_dev->play_back_state == PLAY_BACK_STARTED_STATE) {
+        playback_stop(vts_dev);
+    } else {
+        printf("Is is not in any state\n");
     }
-
     printf("%s: Exit \n", __func__);
     return;
 }
 
 static void vts_close_term_sock(struct vts_hw_device *vts_dev)
 {
-    if (vts_dev->send_sock >=0) {
+    if (vts_dev->send_sock >= 0) {
         close(vts_dev->send_sock);
         vts_dev->send_sock = -1;
     }
-    if (vts_dev->term_sock >=0) {
+    if (vts_dev->term_sock >= 0) {
         close(vts_dev->term_sock);
         vts_dev->term_sock = -1;
     }
-
     return;
 }
 
@@ -311,7 +478,7 @@ static void vts_close_term_sock(struct vts_hw_device *vts_dev)
 static int fetch_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
 {
     int ret = 0;
-    unsigned int flags, frames;
+    unsigned int flags, flags_out, frames;
     int i = 0;
     struct pcm *vcap_pcm = NULL;
     FILE *out_vcap_fp = NULL;
@@ -340,6 +507,9 @@ static int fetch_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
         vcap_pcm = pcm_open(VTS_SOUND_CARD, pcmnode, flags, &pcmconfig);
         if (vcap_pcm && !pcm_is_ready(vcap_pcm)) {
             printf("%s - FAILED to open VTS PCM Node : %d\n", __func__, pcmnode);
+            /* Release VTS capture node */
+            pcm_close(vcap_pcm);
+            vcap_pcm = NULL;
             goto out;
         }
 
@@ -374,7 +544,8 @@ static int fetch_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
             /* leave enough room for header */
             fseek(out_vcap_fp, sizeof(struct wav_header), SEEK_SET);
 
-            for (i=0; i < NUM_OF_SAMPLES_TO_CAPTURE; i++) {
+            i = 0;
+            while(1) {
                 ret = pcm_read(vcap_pcm, (void*)streaming_buf, (unsigned int)VTS_STREAMING_BUFFER_SIZE);
                 if (ret == 0) {
                     printf("%s - Captured %d samples\n", __func__, VTS_STREAMING_BUFFER_SIZE);
@@ -388,6 +559,7 @@ static int fetch_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
                 if ((cap_mode == VTS_TRIGGERED_CAPTURE && vts_dev->thread_exit == true) ||
                     (cap_mode == VTS_NORMAL_CAPTURE && vts_dev->rec_thread_exit == true))
                     break;
+                i++;
             }
         }
 
@@ -443,7 +615,7 @@ static void *callback_thread_loop(void * context)
 
     memset(fds, 0, 2 * sizeof(struct pollfd));
     fds[0].events = POLLIN;
-    fds[0].fd = uevent_open_socket(64*1024, true);
+    fds[0].fd = uevent_open_socket(64 * 1024, true);
     //fds[0].fd = vts_dev->term_sock;
     if (fds[0].fd == -1) {
         printf("Error opening socket for hotplug uevent");
@@ -471,11 +643,18 @@ static void *callback_thread_loop(void * context)
                 if (strstr(msg + i, "VOICE_WAKEUP_WORD_ID=1")) {
                     printf("%s VTS Trigger received for model %s\n", __func__, (msg+i));
                     /* Start reading data from the VTS IP */
-                        fetch_streaming_buffer(vts_dev, VTS_TRIGGERED_CAPTURE);
+                    fetch_streaming_buffer(vts_dev, VTS_TRIGGERED_CAPTURE);
                     printf("\n%s Want to Continue...then Start Recognitoin again\n", __func__);
                     goto found;
-                 }
-                 i += strlen(msg + i) + 1;
+                }
+                else if (strstr(msg + i, "VOICE_WAKEUP_WORD_ID=2")) {
+                    printf("%s VTS Trigger received for model %s\n", __func__, (msg+i));
+                    /* Start reading data from the VTS IP */
+                    fetch_streaming_buffer(vts_dev, VTS_TRIGGERED_CAPTURE);
+                    printf("\n%s Want to Continue...then Start Recognitoin again\n", __func__);
+                    goto found;
+                }
+                i += strlen(msg + i) + 1;
             }
 #if EN_DEBUG
             if (i >= n) {
@@ -508,39 +687,48 @@ func_exit:
         /* once callback thread is closed set vts_stop using sysfs */
         /* Set active keyphrase for voice recognition */
         set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
-                odmvoice_triggerrecognize_stop_ctlvalue, MODEL_CONTROL_COUNT, false);
+                svoice_bixbyrecognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false);
         vts_dev->vts_state = VTS_RECOGNITION_STOPPED_STATE;
         /* reset DMIC controls */
         set_dmic_ctrls(false);
+        set_playback_dmic_ctrls(false);
     }
     vts_dev->thread_exit = false;
     printf("%s: Exit \n", __func__);
     return (void *)(long)err;
 }
 
-void vts_recognition_start(struct vts_hw_device *vts_dev)
+void vts_recognition_start(struct vts_hw_device *vts_dev, int model)
 {
     int ret = 0;
+    char model_bin[50];
+    vts_dev->vts_model_type = model;
+
+    if(model == BIXBY_MODEL)
+        strcpy(model_bin, SOUND_MODEL_SVOICE_BINARY);
+    else
+        strcpy(model_bin, SOUND_MODEL_OKGOOGLE_BINARY);
+
     pthread_mutex_lock(&vts_dev->lock);
     if (vts_dev->vts_state == VTS_RECOGNITION_STOPPED_STATE) {
-        if (!vts_dev->model_loaded ) {
-            FILE *pfile = NULL;
+		if(!(vts_dev->model_loaded & (0x1 << model))) {
+			FILE *pfile = NULL;
             int rd_sz, bin_sz;
             char * data = NULL;
             /* Read model net binay file*/
-            pfile = fopen(SOUND_MODEL_ODMVOICE_BINARY, "rb+");
+            pfile = fopen(model_bin, "rb+");
             if (!pfile) {
                 printf("Model Binary voice_dva_svoice.bin should be copied to \\data\\firmware folder \n");
-                printf("Failed to Open Model Binary from [%s]\n", SOUND_MODEL_ODMVOICE_BINARY);
+                printf("Failed to Open Model Binary from [%s]\n", model_bin);
                 goto error;
             } else {
-                printf("Successfully [%s] file opened!! \n", SOUND_MODEL_ODMVOICE_BINARY);
+                printf("Successfully [%s] file opened!! \n", model_bin);
             }
 
             fseek(pfile, 0L, SEEK_END);
             bin_sz = ftell(pfile);
             fseek(pfile, 0L, SEEK_SET);
-            printf(" Model %s File size %d \n", SOUND_MODEL_ODMVOICE_BINARY, bin_sz);
+            printf(" Model %s File size %d \n", model_bin, bin_sz);
 
             data = (char *)calloc(1, bin_sz);
             if (!data) {
@@ -552,21 +740,25 @@ void vts_recognition_start(struct vts_hw_device *vts_dev)
             rd_sz = fread(data, 1, bin_sz, pfile);
 
             if (rd_sz != bin_sz) {
-                printf("%s -  Failed to read data from %s file\n", __func__, SOUND_MODEL_ODMVOICE_BINARY);
+                printf("%s -  Failed to read data from %s file\n", __func__, model_bin);
                 fclose(pfile);
+                free(data);
                 goto error;
             }
 
             /* Load net binary to VTS driver */
 #ifdef MMAP_INTERFACE_ENABLED
-            load_modelbinary(data, rd_sz);
+            load_modelbinary(data, rd_sz, model);
 #else
-            sysfs_write(VTS_SVOICE_MODEL, data, rd_sz);
+            if(model == BIXBY_MODEL)
+                sysfs_write(VTS_SVOICE_MODEL, data, rd_sz);
+            else
+                sysfs_write(VTS_HOTWORD_MODEL, data, rd_sz);
 #endif
 
             fclose(pfile);
             free(data);
-            vts_dev->model_loaded = true;
+            vts_dev->model_loaded |= (0x1 << model);
         }
 
         /* configure DMIC controls */
@@ -577,14 +769,17 @@ void vts_recognition_start(struct vts_hw_device *vts_dev)
         pthread_create(&vts_dev->callback_thread, (const pthread_attr_t *) NULL,
                             callback_thread_loop, vts_dev);
 
-        set_mixer_ctrls(vtsMixerHandle, model_recognize_start_ctlname,
-                odmvoice_triggerrecognize_start_ctlvalue, MODEL_CONTROL_COUNT, false);
+        if(model == BIXBY_MODEL)
+            set_mixer_ctrls(vtsMixerHandle, model_recognize_start_ctlname,
+                svoice_bixbyrecognize_start_ctlvalue, MODEL_START_CONTROL_COUNT, false);
+        else
+            set_mixer_ctrls(vtsMixerHandle, model_recognize_start_ctlname,
+                hotword_recognize_start_ctlvalue, MODEL_START_CONTROL_COUNT, false);
 
         vts_dev->vts_state = VTS_RECOGNITION_STARTED_STATE;
     } else {
         printf("VTS Voice Recognition already running \n");
     }
-
 error:
     pthread_mutex_unlock(&vts_dev->lock);
     printf("%s: Exit Tar-size 1000ms\n", __func__);
@@ -606,8 +801,12 @@ void vts_recognition_stop(struct vts_hw_device *vts_dev)
 
         pthread_mutex_lock(&vts_dev->lock);
 
-        set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
-                odmvoice_triggerrecognize_stop_ctlvalue, MODEL_CONTROL_COUNT, false);
+        if(vts_dev->vts_model_type == BIXBY_MODEL)
+            set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
+                svoice_bixbyrecognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false);
+        else
+            set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
+                hotword_recognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false);
 
         /* configure DMIC controls */
         set_dmic_ctrls(false);
@@ -631,7 +830,7 @@ static void *record_thread_loop(void * context)
     prctl(PR_SET_NAME, (unsigned long)"VTSRecord", 0, 0, 0);
 
     printf("%s Started!!\n", __func__);
-    fetch_streaming_buffer(vts_dev, VTS_NORMAL_CAPTURE);
+    fetch_streaming_buffer(vts_dev, VTS_NORMAL_CAPTURE); // VTS_TRIGGERED_CAPTURE,VTS_NORMAL_CAPTURE
 
     vts_dev->vts_rec_state = VTS_RECORD_STOPPED_STATE;
 
@@ -688,8 +887,8 @@ void vts_record_stop(struct vts_hw_device *vts_dev)
     return;
 }
 
-/******** VTS ODM Reserved2 Mode support function ***************/
-static void *odmrsvd2_thread_loop(void * context)
+/******** VTS LPSD (BabyCrying) Mode support function ***************/
+static void *lpsd_thread_loop(void * context)
 {
     char msg[UEVENT_MSG_LEN];
     struct pollfd fds[2];
@@ -698,23 +897,23 @@ static void *odmrsvd2_thread_loop(void * context)
     int i, n;
     struct vts_hw_device *vts_dev = (struct vts_hw_device *)context;
 
-    prctl(PR_SET_NAME, (unsigned long)"VTSODMReserved2Mode", 0, 0, 0);
+    prctl(PR_SET_NAME, (unsigned long)"VTSLPSD", 0, 0, 0);
 
     printf("%s Started!!\n", __func__);
 
     memset(fds, 0, 2 * sizeof(struct pollfd));
     fds[0].events = POLLIN;
-    fds[0].fd = uevent_open_socket(64*1024, true);
+    fds[0].fd = uevent_open_socket(64 * 1024, true);
     if (fds[0].fd == -1) {
         printf("Error opening socket for hotplug uevent");
         goto func_exit;
     }
 
     while (1) {
-        printf("%s: ODMReserved2Mode Before poll \n", __func__);
-        /* wait for VTS ODMReserved2Mode Uevent */
+        printf("%s: LPSD Before poll \n", __func__);
+        /* wait for VTS LPSD Uevent */
         err = poll(fds, 1, 10000);
-        printf("%s: ODMReserved2Mode After poll \n", __func__);
+        printf("%s: LPSD After poll \n", __func__);
 
         if (fds[0].revents & POLLIN) {
             n = uevent_kernel_multicast_recv(fds[0].fd, msg, UEVENT_MSG_LEN);
@@ -723,9 +922,9 @@ static void *odmrsvd2_thread_loop(void * context)
                 continue;
             }
 
-            for (i=0; i < n;) {
-                if (strstr(msg + i, "VOICE_WAKEUP_WORD_ID=3")) {
-                    printf("%s VTS ODMReserved2Mode UEVENT received %s\n", __func__, (msg+i));
+            for (i = 0; i < n;) {
+                if (strstr(msg + i, "VOICE_WAKEUP_WORD_ID=LPSD")) {
+                    printf("%s VTS LPSD UEVENT received %s\n", __func__, (msg + i));
                     goto found;
                  }
                  i += strlen(msg + i) + 1;
@@ -733,112 +932,773 @@ static void *odmrsvd2_thread_loop(void * context)
 #if EN_DEBUG
             if (i >= n) {
                 i = 0;
-                printf("%s ODMReserved2Mode UEVENT MSG INFO: \n", __func__);
+                printf("%s LPSD UEVENT MSG INFO: \n", __func__);
                 while (i < n) {
-                    printf("%s \n", (msg+i));
-                    i += strlen(msg+i)+1;
+                    printf("%s \n", (msg + i));
+                    i += strlen(msg + i) + 1;
                 }
             }
 #else
             if (i >= n)
-                printf("%s Received UEVENT is NOT ODMReserved2Mode event !!\n", __func__);
+                printf("%s Received UEVENT is NOT LPSD event !!\n", __func__);
 #endif
          }  else {
             printf("%s: Poll returned %d\n", __func__, err);
         }
-        if (vts_dev->odmrsvd2_thread_exit == true)
+        if (vts_dev->lpsd_thread_exit == true)
             break;
     }
 
 found:
     close(fds[0].fd);
 func_exit:
-    if (vts_dev->odmrsvd2_thread_exit == false) {
+    if (vts_dev->lpsd_thread_exit == false) {
         /* once callback thread is closed set vts_stop using sysfs */
         set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
-                odmvoice_reserved2recognize_stop_ctlvalue, MODEL_CONTROL_COUNT, false);
+                svoice_lpsdrecognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false);
 
-        vts_dev->vts_odmrsvd2_state = VTS_RESERVED2_STOPPED_STATE;
+        vts_dev->vts_lpsd_state = VTS_LPSD_STOPPED_STATE;
 
         /* reset DMIC controls */
         set_dmic_ctrls(false);
     }
 
-    vts_dev->odmrsvd2_thread_exit = false;
+    vts_dev->lpsd_thread_exit = false;
     printf("%s: Exit \n", __func__);
     return (void *)(long)err;
 }
 
-void vts_odmrsvd2_start(struct vts_hw_device *vts_dev)
+void vts_lpsd_start(struct vts_hw_device *vts_dev)
 {
     pthread_mutex_lock(&vts_dev->lock);
-    if (vts_dev->vts_odmrsvd2_state == VTS_RESERVED2_STOPPED_STATE) {
-        /* Create odmrsvd2 thread to wait on uevent from VTS IP*/
-        vts_dev->odmrsvd2_thread_exit = false;
-        pthread_create(&vts_dev->odmrsvd2_thread, (const pthread_attr_t *) NULL,
-                            odmrsvd2_thread_loop, vts_dev);
+    if (vts_dev->vts_lpsd_state == VTS_LPSD_STOPPED_STATE) {
+        /* Create lpsd thread to wait on uevent from VTS IP*/
+        vts_dev->lpsd_thread_exit = false;
+        pthread_create(&vts_dev->lpsd_thread, (const pthread_attr_t *) NULL,
+                            lpsd_thread_loop, vts_dev);
 
         /* configure DMIC controls */
         set_dmic_ctrls(true);
 
         set_mixer_ctrls(vtsMixerHandle, model_recognize_start_ctlname,
-                        odmvoice_reserved2recognize_start_ctlvalue, MODEL_CONTROL_COUNT, false);
+                        svoice_lpsdrecognize_start_ctlvalue, MODEL_START_CONTROL_COUNT, false);
 
-        vts_dev->vts_odmrsvd2_state = VTS_RESERVED2_STARTED_STATE;
+        vts_dev->vts_lpsd_state = VTS_LPSD_STARTED_STATE;
     } else {
-        printf("VTS ODMRsvd2 Already started \n");
+        printf("VTS LPSD (BabyCrying) Already started \n");
     }
     pthread_mutex_unlock(&vts_dev->lock);
     printf("%s: Exit \n", __func__);
     return;
 }
 
-void vts_odmrsvd2_stop(struct vts_hw_device *vts_dev)
+void vts_lpsd_stop(struct vts_hw_device *vts_dev)
 {
     pthread_mutex_lock(&vts_dev->lock);
-    if (vts_dev->vts_odmrsvd2_state == VTS_RESERVED2_STARTED_STATE) {
-        /* Stop ODMRsvd2 thread first */
-        vts_dev->odmrsvd2_thread_exit = true;
+    if (vts_dev->vts_lpsd_state == VTS_LPSD_STARTED_STATE) {
+        /* Stop LPSD thread first */
+        vts_dev->lpsd_thread_exit = true;
         /* once callback thread is closed disable voice recognition */
 
         pthread_mutex_unlock(&vts_dev->lock);
-
-        pthread_join(vts_dev->odmrsvd2_thread, (void**)NULL);
-
+        pthread_join(vts_dev->lpsd_thread, (void**)NULL);
         pthread_mutex_lock(&vts_dev->lock);
-
         set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
-                        odmvoice_reserved2recognize_stop_ctlvalue, MODEL_CONTROL_COUNT, false);
+                        svoice_lpsdrecognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false);
 
         /* configure DMIC controls */
         set_dmic_ctrls(false);
 
-        vts_dev->vts_odmrsvd2_state = VTS_RESERVED2_STOPPED_STATE;
+        vts_dev->vts_lpsd_state = VTS_LPSD_STOPPED_STATE;
     } else {
-        printf("VTS ODMRsvd2 NOT started yet \n");
+        printf("VTS LPSD(BabyCrying) NOT started yet \n");
     }
     pthread_mutex_unlock(&vts_dev->lock);
     printf("%s: Exit \n", __func__);
     return;
 }
+
+/************Voice play support funtion**********************/
+static int play_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
+{
+    int ret = 0, ret_out = 0;
+    unsigned int flags_out;
+    int i = 0, j = 0;
+    struct pcm *vcap_pcm_out = NULL;
+    char *streaming_buf;
+    char *streaming_buf_temp;
+    FILE *file = NULL;
+    size_t num_read;
+    unsigned int pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+
+    struct pcm_config pcmconfig_out = {
+        .channels = 2,
+        .rate = 16000,
+        .period_size = 160,
+        .period_count = 1024,
+        .format = PCM_FORMAT_S16_LE,
+        .stop_threshold = UINT_MAX,
+    };
+
+    streaming_buf = malloc(VTS_STREAMING_BUFFER_SIZE);
+    if (!streaming_buf) {
+        printf("Failed to malloc streaming buffer!!\n");
+        goto out3;
+    }
+    streaming_buf_temp = malloc(PLAY_BACK_BUFFER_SIZE);
+    if (!streaming_buf_temp) {
+        printf("Failed to malloc streaming_buf_temp!!\n");
+        goto out2;
+    }
+
+    file = fopen(VTS_NORMAL_CAPTURE_OUTPUT, "rb");
+    if (!file) {
+        printf("Failed to open file '%s'.\n", VTS_NORMAL_CAPTURE_OUTPUT);
+        goto out2;
+    }
+
+    pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+    flags_out = PCM_OUT;
+
+    vcap_pcm_out = pcm_open(VTS_SOUND_CARD, PLAYBACK_OUT_DEVICE_NODE, flags_out, &pcmconfig_out);
+    if (vcap_pcm_out && !pcm_is_ready(vcap_pcm_out)) {
+        printf("%s - FAILED to open ( vcap_pcm_out ) VTS PCM Node : %d\n", __func__, PLAYBACK_OUT_DEVICE_NODE);
+        pcm_close(vcap_pcm_out);
+        goto out;
+    }
+    printf("vcap_pcm_out : %p\n", vcap_pcm_out);
+    printf("vcap_pcm_out pcm_is_ready: %d\n", pcm_is_ready(vcap_pcm_out));
+    printf("%s: Fetching bytes \n", __func__);
+
+    while(1){
+        num_read = fread((void*)streaming_buf, 1, (unsigned int)VTS_STREAMING_BUFFER_SIZE, file);
+        printf("num_read : %zu\n", num_read);
+        if (num_read > 0) {
+            printf("%s - Captured %d samples\n", __func__, VTS_STREAMING_BUFFER_SIZE);
+            for(j = 0; j < (VTS_STREAMING_BUFFER_SIZE >> 1); j++) {
+                memcpy(streaming_buf_temp + j * 4, streaming_buf + j * 2, (unsigned int)2);
+                memcpy(streaming_buf_temp + (j * 4) + 2, streaming_buf + j * 2, (unsigned int)2);
+            }
+            //write capture pcm data to output device
+            ret_out = pcm_write(vcap_pcm_out, (void*)streaming_buf_temp, (unsigned int)PLAY_BACK_BUFFER_SIZE);
+            printf("pcm_write -> ret_out : %d\n", ret_out);
+            if(ret_out != 0) {
+                printf("Failed to pcm_write!!\n");
+                break;
+            }
+        } else {
+            printf("Failed to fread\n");
+            break;
+        }
+        if (cap_mode == VTS_NORMAL_CAPTURE && vts_dev->vts_play_thread_exit == true)
+            break;
+    }
+    // Release VTS capture node
+    pcm_close(vcap_pcm_out);
+    vcap_pcm_out = NULL;
+    sysfs_write("/sys/power/wake_unlock", "vtshw-test", sizeof("vtshw-test"));
+    printf("%s - Wake Lock Released\n", __func__);
+out:
+    fclose(file);
+out2:
+    if (streaming_buf_temp)
+        free(streaming_buf_temp);
+out3:
+    if (streaming_buf)
+        free(streaming_buf);
+    return ret_out;
+}
+
+static void *play_thread_loop(void * context)
+{
+    int err = 0;
+    int i, n;
+    struct vts_hw_device *vts_dev = (struct vts_hw_device *)context;
+
+    prctl(PR_SET_NAME, (unsigned long)"VTSRecord", 0, 0, 0);
+    printf("%s Started!!\n", __func__);
+    play_streaming_buffer(vts_dev, VTS_NORMAL_CAPTURE);
+    vts_dev->vts_play_state = VTS_PLAY_STOPPED_STATE;
+    if (vts_dev->play_thread_exit == true) {
+        //reset DMIC controls
+        set_dmic_ctrls(false);
+    }
+    printf("%s: Exit \n", __func__);
+    return (void *)(long)err;
+}
+
+void vts_play_start(struct vts_hw_device *vts_dev)
+{
+    pthread_mutex_lock(&vts_dev->lock);
+    if (vts_dev->vts_play_state == VTS_PLAY_STOPPED_STATE) {
+        //Create lpsd thread to wait on uevent from VTS IP
+        set_dmic_ctrls(true);
+        set_playback_dmic_ctrls(true);
+        vts_dev->vts_play_thread_exit = false;
+        pthread_create(&vts_dev->vts_play_thread, (const pthread_attr_t *) NULL,
+                            play_thread_loop, vts_dev);
+
+        vts_dev->vts_play_state = VTS_PLAY_STARTED_STATE;
+    } else {
+        printf("VTS PLAY Already started \n");
+    }
+    pthread_mutex_unlock(&vts_dev->lock);
+    printf("%s: Exit \n", __func__);
+    return;
+}
+
+
+void vts_play_stop(struct vts_hw_device *vts_dev)
+{
+    pthread_mutex_lock(&vts_dev->lock);
+    if (vts_dev->vts_play_state == VTS_PLAY_STARTED_STATE) {
+        vts_dev->vts_play_thread_exit = true;
+        pthread_mutex_unlock(&vts_dev->lock);
+        pthread_join(vts_dev->vts_play_thread, (void**)NULL);
+        pthread_mutex_lock(&vts_dev->lock);
+        set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
+                        svoice_lpsdrecognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false);
+
+        set_dmic_ctrls(false);
+        set_playback_dmic_ctrls(false);
+        vts_dev->vts_play_state = VTS_PLAY_STOPPED_STATE;
+    } else {
+        printf("VTS LPSD(BabyCrying) NOT started yet \n");
+    }
+    pthread_mutex_unlock(&vts_dev->lock);
+    printf("%s: Exit \n", __func__);
+    return;
+}
+
+
+/******** Voice Playback support function ***************/
+static int playback_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
+{
+    int ret = -1, ret_out = -1;
+    unsigned int flags, flags_out, frames;
+    int i = 0, j = 0;
+    struct pcm *vcap_pcm = NULL;
+    struct pcm *vcap_pcm_out = NULL;
+    char *streaming_buf;
+    char *streaming_buf_temp;
+    unsigned int pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+
+    FILE *file_in = NULL;
+    FILE *file_out = NULL;
+    struct wav_header header_in, header_out;
+    struct pcm_config pcmconfig = {
+        .channels = 1,
+        .rate = 16000,
+        .period_size = 160,
+        .period_count = 512,
+        .format = PCM_FORMAT_S16_LE,
+    };
+    struct pcm_config pcmconfig_out = {
+        .channels = 2,
+        .rate = 16000,
+        .period_size = 160, //960,4
+        .period_count = 512,
+        .format = PCM_FORMAT_S16_LE,
+    .start_threshold = 1,
+        .stop_threshold = UINT_MAX,
+    };
+
+    streaming_buf = malloc(LOOPBACK_BUFFER_SIZE);
+    if (!streaming_buf) {
+        printf("Failed to malloc streaming buffer!!\n");
+        goto out4;
+    }
+    streaming_buf_temp = malloc(PLAY_BACK_BUFFER_SIZE);
+    if (!streaming_buf_temp) {
+        printf("Failed to malloc streaming_buf_temp!!\n");
+        goto out3;
+    }
+    /* initialize the Wav Header information */
+    header_in.riff_id = ID_RIFF;
+    header_in.riff_sz = 0;
+    header_in.riff_fmt = ID_WAVE;
+    header_in.fmt_id = ID_FMT;
+    header_in.fmt_sz = 16;
+    header_in.audio_format = FORMAT_PCM;
+    header_in.num_channels = pcmconfig.channels;
+    header_in.sample_rate = pcmconfig.rate;
+
+    header_in.bits_per_sample = pcm_format_to_bits(PCM_FORMAT_S16_LE);
+    header_in.byte_rate = (header_in.bits_per_sample / 8) * pcmconfig.channels * pcmconfig.rate;
+    header_in.block_align = pcmconfig.channels * (header_in.bits_per_sample / 8);
+    header_in.data_id = ID_DATA;
+
+    /* open an output file to dump capture vts voice commands */
+    file_in = fopen("/sdcard/vts_in.wav", "w+");
+    if(!file_in){
+        printf("%s - FAILED to open output file !!! %s\n", __func__, "/sdcard/vts_in.wav");
+        goto out3;
+    }
+
+    header_out.riff_id = ID_RIFF;
+    header_out.riff_sz = 0;
+    header_out.riff_fmt = ID_WAVE;
+    header_out.fmt_id = ID_FMT;
+    header_out.fmt_sz = 16;
+    header_out.audio_format = FORMAT_PCM;
+    header_out.num_channels = pcmconfig_out.channels;
+    header_out.sample_rate = pcmconfig_out.rate;
+
+    header_out.bits_per_sample = pcm_format_to_bits(PCM_FORMAT_S16_LE);
+    header_out.byte_rate = (header_out.bits_per_sample / 8) * pcmconfig_out.channels * pcmconfig_out.rate;
+    header_out.block_align = pcmconfig_out.channels * (header_out.bits_per_sample / 8);
+    header_out.data_id = ID_DATA;
+
+    /* open an output file to dump capture vts voice commands */
+    file_out = fopen("/sdcard/vts_out.wav", "w+");
+    if(!file_out){
+        printf("%s - FAILED to open output file !!! %s\n", __func__, "/sdcard/vts_out.wav");
+        goto out2;
+    }
+    int k = 0;
+    printf("%s: Fetching bytes \n", __func__);
+    if (!vcap_pcm) {
+        /* Open vts capture pcm node */
+        pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+        flags = PCM_IN;
+        flags_out = PCM_OUT;
+
+        vcap_pcm_out = pcm_open(VTS_SOUND_CARD, PLAYBACK_OUT_DEVICE_NODE, flags_out, &pcmconfig_out);
+        if (vcap_pcm_out && !pcm_is_ready(vcap_pcm_out)) {
+            printf("%s - FAILED to open ( vcap_pcm_out ) VTS PCM Node : %d\n", __func__, PLAYBACK_OUT_DEVICE_NODE);
+            goto out;
+        }
+        printf("vcap_pcm_out : %p\n", vcap_pcm_out);
+        printf("vcap_pcm_out pcm_is_ready: %d\n", pcm_is_ready(vcap_pcm_out));
+        printf("vcap_pcm -> pcmnode : %d\n", pcmnode);
+        vcap_pcm = pcm_open(VTS_SOUND_CARD, pcmnode, flags, &pcmconfig);
+        if (vcap_pcm && !pcm_is_ready(vcap_pcm)) {
+            printf("%s - FAILED to open ( vcap_pcm ) VTS PCM Node : %d\n", __func__, pcmnode);
+            pcm_close(vcap_pcm);
+            goto out;
+        }
+        printf("vcap_pcm : %p\n", vcap_pcm);
+        printf("vcap_pcm pcm_is_ready: %d\n", pcm_is_ready(vcap_pcm));
+        sysfs_write("/sys/power/wake_lock", "vtshw-test", sizeof("vtshw-test"));
+        printf("%s - Wake Lock Acquired\n", __func__);
+        fseek(file_in, sizeof(struct wav_header), SEEK_SET);
+        fseek(file_out, sizeof(struct wav_header), SEEK_SET);
+        memset(streaming_buf, 0, (unsigned int)LOOPBACK_BUFFER_SIZE);
+        while(1) {
+            ret = pcm_read(vcap_pcm, (void*)(streaming_buf + (i%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE), (unsigned int)VTS_STREAMING_BUFFER_SIZE);
+            printf("pcm_read -> ret : %d\n", ret);
+            if (ret == 0 && i >= 10) {
+                memset(streaming_buf_temp, 0, (unsigned int)PLAY_BACK_BUFFER_SIZE);
+                printf("%s - Captured %d samples\n", __func__, VTS_STREAMING_BUFFER_SIZE);
+                for(j = 0; j < (VTS_STREAMING_BUFFER_SIZE >> 1); j++){
+                    memcpy(streaming_buf_temp + j * 4, streaming_buf + (k%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE + j * 2, (unsigned int)2);
+                    memcpy(streaming_buf_temp + (j * 4) + 2, streaming_buf + (k%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE + j * 2, (unsigned int)2);
+                }
+                ret_out = pcm_write(vcap_pcm_out, (void*)(streaming_buf_temp), (unsigned int)PLAY_BACK_BUFFER_SIZE);
+                printf("pcm_write -> ret_out : %d\n", ret_out);
+                fwrite((void*)streaming_buf_temp, (unsigned int)PLAY_BACK_BUFFER_SIZE, 1, file_out);
+                k++;
+                if (ret_out != 0) {
+                    printf("Failed to pcm_write!!\n");
+                    break;
+                }
+            } else {
+                printf("%s - Failed to capture requested samples %s \n", __func__, pcm_get_error(vcap_pcm));
+                //sleep(10);
+            }
+            fwrite((void*)(streaming_buf + (i%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE), (unsigned int)VTS_STREAMING_BUFFER_SIZE, 1, file_in);
+            i++;
+            if (cap_mode == VTS_NORMAL_CAPTURE && vts_dev->play_thread_exit == true)
+                break;
+        }
+        /* Release VTS capture node */
+        frames = pcm_bytes_to_frames(vcap_pcm, (i * VTS_STREAMING_BUFFER_SIZE));
+        header_in.data_sz = frames * header_in.block_align;
+        header_in.riff_sz = (uint32_t)(header_in.data_sz + sizeof(header_in) - 8);
+        fseek(file_in, 0, SEEK_SET);
+        fwrite(&header_in, sizeof(struct wav_header), 1, file_in);
+
+        frames = pcm_bytes_to_frames(vcap_pcm_out, (k * PLAY_BACK_BUFFER_SIZE));
+        header_out.data_sz = frames * header_out.block_align;
+        header_out.riff_sz = (uint32_t)(header_out.data_sz + sizeof(header_out) - 8);
+        fseek(file_out, 0, SEEK_SET);
+        fwrite(&header_out, sizeof(struct wav_header), 1, file_out);
+
+        pcm_close(vcap_pcm);
+        vcap_pcm = NULL;
+        sysfs_write("/sys/power/wake_unlock", "vtshw-test", sizeof("vtshw-test"));
+        printf("%s - Wake Lock Released\n", __func__);
+    }
+out:
+    pcm_close(vcap_pcm_out);
+    vcap_pcm_out = NULL;
+    fclose(file_out);
+    file_out = NULL;
+out2:
+    fclose(file_in);
+    file_in = NULL;
+out3:
+    if (streaming_buf_temp)
+        free(streaming_buf_temp);
+out4:
+    if (streaming_buf)
+        free(streaming_buf);
+    return ret_out;
+}
+
+static int looprec_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
+{
+    int ret = -1;
+    unsigned int flags, frames;
+    int i = 0, j = 0;
+    struct pcm *vcap_pcm = NULL;
+    unsigned int pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+
+    FILE *file_in = NULL;
+    struct wav_header header_in;
+    struct pcm_config pcmconfig = {
+        .channels = 1,
+        .rate = 16000,
+        .period_size = 160,
+        .period_count = 512,
+        .format = PCM_FORMAT_S16_LE,
+    };
+
+    loopback_stream = malloc(LOOPBACK_BUFFER_SIZE);
+    if (!loopback_stream) {
+        printf("Failed to malloc streaming buffer!!\n");
+        goto out;
+    }
+    /* initialize the Wav Header information */
+    header_in.riff_id = ID_RIFF;
+    header_in.riff_sz = 0;
+    header_in.riff_fmt = ID_WAVE;
+    header_in.fmt_id = ID_FMT;
+    header_in.fmt_sz = 16;
+    header_in.audio_format = FORMAT_PCM;
+    header_in.num_channels = pcmconfig.channels;
+    header_in.sample_rate = pcmconfig.rate;
+
+    header_in.bits_per_sample = pcm_format_to_bits(PCM_FORMAT_S16_LE);
+    header_in.byte_rate = (header_in.bits_per_sample / 8) * pcmconfig.channels * pcmconfig.rate;
+    header_in.block_align = pcmconfig.channels * (header_in.bits_per_sample / 8);
+    header_in.data_id = ID_DATA;
+
+    /* open an output file to dump capture vts voice commands */
+    file_in = fopen("/sdcard/vts_in.wav", "w+");
+    if(!file_in){
+        printf("%s - FAILED to open output file !!! %s\n", __func__, "/sdcard/vts_in.wav");
+        goto out;
+    }
+
+    int k = 0;
+    printf("%s: Fetching bytes \n", __func__);
+
+    vts_dev->start_loopback_play= false;
+    if (!vcap_pcm) {
+        /* Open vts capture pcm node */
+        pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+        flags = PCM_IN;
+
+        printf("vcap_pcm -> pcmnode : %d\n", pcmnode);
+        vcap_pcm = pcm_open(VTS_SOUND_CARD, pcmnode, flags, &pcmconfig);
+        if (vcap_pcm && !pcm_is_ready(vcap_pcm)) {
+            printf("%s - FAILED to open ( vcap_pcm ) VTS PCM Node : %d\n", __func__, pcmnode);
+            pcm_close(vcap_pcm);
+            fclose(file_in);
+            goto out;
+        }
+        printf("vcap_pcm : %p\n", vcap_pcm);
+        printf("vcap_pcm pcm_is_ready: %d\n", pcm_is_ready(vcap_pcm));
+
+        sysfs_write("/sys/power/wake_lock", "vtshw-test", sizeof("vtshw-test"));
+        printf("%s - Wake Lock Acquired\n", __func__);
+        fseek(file_in, sizeof(struct wav_header), SEEK_SET);
+        memset(loopback_stream, 0, (unsigned int)LOOPBACK_BUFFER_SIZE);
+        while(1) {
+            memset((void*)(loopback_stream + (i%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE), 0, (unsigned int)VTS_STREAMING_BUFFER_SIZE);
+            ret = pcm_read(vcap_pcm, (void*)(loopback_stream + (i%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE), (unsigned int)VTS_STREAMING_BUFFER_SIZE);
+            printf("pcm_read -> ret : %d\n", ret);
+            if (ret == 0) {
+                vts_dev->start_loopback_play = true;
+                fwrite((void*)(loopback_stream + (i%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE), (unsigned int)VTS_STREAMING_BUFFER_SIZE, 1, file_in);
+                i++;
+            } else {
+                printf("%s - Failed to capture requested samples %s \n", __func__, pcm_get_error(vcap_pcm));
+                //sleep(10);
+            }
+
+            if (cap_mode == VTS_NORMAL_CAPTURE && vts_dev->play_thread_exit == true)
+                break;
+        }
+        /* Release VTS capture node */
+        frames = pcm_bytes_to_frames(vcap_pcm, (i * VTS_STREAMING_BUFFER_SIZE));
+        header_in.data_sz = frames * header_in.block_align;
+        header_in.riff_sz = (uint32_t)(header_in.data_sz + sizeof(header_in) - 8);
+        fseek(file_in, 0, SEEK_SET);
+        fwrite(&header_in, sizeof(struct wav_header), 1, file_in);
+
+        /* close output file */
+        fclose(file_in);
+        file_in = NULL;
+        pcm_close(vcap_pcm);
+        vcap_pcm = NULL;
+        sysfs_write("/sys/power/wake_unlock", "vtshw-test", sizeof("vtshw-test"));
+        printf("%s - Wake Lock Released\n", __func__);
+    }
+out:
+    if (loopback_stream)
+        free(loopback_stream);
+    return ret;
+}
+
+
+static int loopplay_streaming_buffer(struct vts_hw_device *vts_dev, int cap_mode)
+{
+    int ret = -1, ret_out = -1;
+    unsigned int flags_out, frames;
+    int i = 0, j = 0;
+    struct pcm *vcap_pcm_out = NULL;
+    char *streaming_buf_temp;
+    unsigned int pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+
+    FILE *file_out = NULL;
+	struct wav_header header_out;
+    struct pcm_config pcmconfig_out = {
+        .channels = 2,
+        .rate = 16000,
+        .period_size = 160, //960,4
+        .period_count = 512,
+        .format = PCM_FORMAT_S16_LE,
+        .start_threshold = 1,
+        .stop_threshold = UINT_MAX,
+    };
+
+    streaming_buf_temp = malloc(PLAY_BACK_BUFFER_SIZE);
+    if (!streaming_buf_temp) {
+        printf("Failed to malloc streaming_buf_temp!!\n");
+        goto out2;
+    }
+    /* initialize the Wav Header information */
+    header_out.riff_id = ID_RIFF;
+    header_out.riff_sz = 0;
+    header_out.riff_fmt = ID_WAVE;
+    header_out.fmt_id = ID_FMT;
+    header_out.fmt_sz = 16;
+    header_out.audio_format = FORMAT_PCM;
+    header_out.num_channels = pcmconfig_out.channels;
+    header_out.sample_rate = pcmconfig_out.rate;
+
+    header_out.bits_per_sample = pcm_format_to_bits(PCM_FORMAT_S16_LE);
+    header_out.byte_rate = (header_out.bits_per_sample / 8) * pcmconfig_out.channels * pcmconfig_out.rate;
+    header_out.block_align = pcmconfig_out.channels * (header_out.bits_per_sample / 8);
+    header_out.data_id = ID_DATA;
+
+    /* open an output file to dump capture vts voice commands */
+    file_out = fopen("/sdcard/vts_out.wav", "w+");
+    if(!file_out){
+        printf("%s - FAILED to open output file !!! %s\n", __func__, "/sdcard/vts_out.wav");
+        goto out2;
+    }
+    int k = 0;
+    printf("%s: Fetching bytes \n", __func__);
+    if (!vcap_pcm_out) {
+        /* Open vts capture pcm node */
+        pcmnode = (cap_mode == VTS_TRIGGERED_CAPTURE ? VTS_TRICAP_DEVICE_NODE : VTS_RECORD_DEVICE_NODE);
+        flags_out = PCM_OUT;
+
+        vcap_pcm_out = pcm_open(VTS_SOUND_CARD, PLAYBACK_OUT_DEVICE_NODE, flags_out, &pcmconfig_out);
+        if (vcap_pcm_out && !pcm_is_ready(vcap_pcm_out)) {
+            printf("%s - FAILED to open ( vcap_pcm_out ) VTS PCM Node : %d\n", __func__, PLAYBACK_OUT_DEVICE_NODE);
+            pcm_close(vcap_pcm_out);
+            goto out;
+        }
+        printf("vcap_pcm_out : %p\n", vcap_pcm_out);
+        printf("vcap_pcm_out pcm_is_ready: %d\n", pcm_is_ready(vcap_pcm_out));
+
+        sysfs_write("/sys/power/wake_lock", "vtshw-test", sizeof("vtshw-test"));
+        printf("%s - Wake Lock Acquired\n", __func__);
+        fseek(file_out, sizeof(struct wav_header), SEEK_SET);
+        while(1) {
+            if (vts_dev->start_loopback_play) {
+                memset(streaming_buf_temp, 0, (unsigned int)PLAY_BACK_BUFFER_SIZE);
+                printf("%s - Captured %d samples\n", __func__, VTS_STREAMING_BUFFER_SIZE);
+                for(j = 0; j < (VTS_STREAMING_BUFFER_SIZE >> 1); j++){
+                    memcpy(streaming_buf_temp + j * 4, loopback_stream + (k%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE + j * 2, (unsigned int)2);
+                    memcpy(streaming_buf_temp + (j * 4) + 2, loopback_stream + (k%NUM_OF_SAMPLES_TO_CAPTURE)*VTS_STREAMING_BUFFER_SIZE + j * 2, (unsigned int)2);
+                }
+                ret_out = pcm_write(vcap_pcm_out, (void*)(streaming_buf_temp), (unsigned int)PLAY_BACK_BUFFER_SIZE);
+                printf("pcm_write -> ret_out : %d\n", ret_out);
+                fwrite((void*)streaming_buf_temp, (unsigned int)PLAY_BACK_BUFFER_SIZE, 1, file_out);
+                k++;
+                if (ret_out != 0) {
+                    printf("Failed to pcm_write!!\n");
+                    break;
+                }
+            } else {
+                printf("%s - Failed to capture requested samples %s \n", __func__, pcm_get_error(vcap_pcm_out));
+                //sleep(10);
+            }
+            if (cap_mode == VTS_NORMAL_CAPTURE && vts_dev->play_thread_exit == true)
+                break;
+        }
+        /* Release VTS capture node */
+        frames = pcm_bytes_to_frames(vcap_pcm_out, (k * PLAY_BACK_BUFFER_SIZE));
+        header_out.data_sz = frames * header_out.block_align;
+        header_out.riff_sz = (uint32_t)(header_out.data_sz + sizeof(header_out) - 8);
+        fseek(file_out, 0, SEEK_SET);
+        fwrite(&header_out, sizeof(struct wav_header), 1, file_out);
+
+        /* close output file */
+        pcm_close(vcap_pcm_out);
+        vcap_pcm_out = NULL;
+        sysfs_write("/sys/power/wake_unlock", "vtshw-test", sizeof("vtshw-test"));
+        printf("%s - Wake Lock Released\n", __func__);
+    }
+out:
+    fclose(file_out);
+    file_out = NULL;
+out2:
+    if (streaming_buf_temp)
+        free(streaming_buf_temp);
+    return ret_out;
+}
+
+static void *looprec_thread_loop(void * context)
+{
+    int err = 0;
+    struct vts_hw_device *vts_dev = (struct vts_hw_device *)context;
+
+    prctl(PR_SET_NAME, (unsigned long)"VTSRecord", 0, 0, 0);
+
+    printf("%s Started!!\n", __func__);
+    looprec_streaming_buffer(vts_dev, VTS_NORMAL_CAPTURE); // VTS_TRIGGERED_CAPTURE
+
+    vts_dev->play_back_state = PLAY_BACK_STOPPED_STATE;
+
+    if (vts_dev->play_thread_exit == true) {
+        /* reset DMIC controls */
+        set_dmic_ctrls(false);
+    }
+    printf("%s: Exit \n", __func__);
+    return (void *)(long)err;
+}
+
+
+static void *loopplay_thread_loop(void * context)
+{
+    int err = 0;
+    struct vts_hw_device *vts_dev = (struct vts_hw_device *)context;
+
+    prctl(PR_SET_NAME, (unsigned long)"VTSRecord", 0, 0, 0);
+
+    printf("%s Started!!\n", __func__);
+    loopplay_streaming_buffer(vts_dev, VTS_NORMAL_CAPTURE); // VTS_TRIGGERED_CAPTURE
+
+    vts_dev->play_back_state = PLAY_BACK_STOPPED_STATE;
+
+    if (vts_dev->play_thread_exit == true) {
+        /* reset DMIC controls */
+        set_dmic_ctrls(false);
+    }
+    printf("%s: Exit \n", __func__);
+    return (void *)(long)err;
+}
+
+static void *playback_thread_loop(void * context)
+{
+    int err = 0;
+    struct vts_hw_device *vts_dev = (struct vts_hw_device *)context;
+
+    prctl(PR_SET_NAME, (unsigned long)"VTSRecord", 0, 0, 0);
+
+    printf("%s Started!!\n", __func__);
+    playback_streaming_buffer(vts_dev, VTS_NORMAL_CAPTURE); // VTS_TRIGGERED_CAPTURE
+
+    vts_dev->play_back_state = PLAY_BACK_STOPPED_STATE;
+
+    if (vts_dev->play_thread_exit == true) {
+        /* reset DMIC controls */
+        set_dmic_ctrls(false);
+    }
+    printf("%s: Exit \n", __func__);
+    return (void *)(long)err;
+}
+
+
+void playback_start(struct vts_hw_device *vts_dev)
+{
+    pthread_mutex_lock(&vts_dev->lock);
+    if (vts_dev->play_back_state == PLAY_BACK_STOPPED_STATE) {
+        /* configure DMIC controls */
+        set_dmic_ctrls(true);
+        set_playback_dmic_ctrls(true);
+
+        /* Create recorrd thread to playback*/
+        vts_dev->play_thread_exit = false;
+        // pthread_create(&vts_dev->play_thread, (const pthread_attr_t *) NULL, playback_thread_loop, vts_dev);
+        pthread_create(&vts_dev->rec_thread, (const pthread_attr_t *) NULL, looprec_thread_loop, vts_dev);
+        pthread_create(&vts_dev->play_thread, (const pthread_attr_t *) NULL, loopplay_thread_loop, vts_dev);
+
+        vts_dev->play_back_state = PLAY_BACK_STARTED_STATE;
+    } else {
+        printf("VTS Recording Already started \n");
+    }
+    pthread_mutex_unlock(&vts_dev->lock);
+    printf("%s: Exit \n", __func__);
+    return;
+}
+
+void playback_stop(struct vts_hw_device *vts_dev)
+{
+    pthread_mutex_lock(&vts_dev->lock);
+    if (vts_dev->play_back_state == PLAY_BACK_STARTED_STATE) {
+        vts_dev->play_thread_exit = true;
+
+        if (vts_dev->send_sock >= 0)
+            write(vts_dev->send_sock, "T", 1);
+
+        pthread_mutex_unlock(&vts_dev->lock);
+        pthread_join(vts_dev->play_thread, (void**)NULL);
+        pthread_mutex_lock(&vts_dev->lock);
+
+        /* configure DMIC controls */
+        set_dmic_ctrls(false);
+        set_playback_dmic_ctrls(false);
+        set_mixer_ctrls(vtsMixerHandle, model_recognize_stop_ctlname,
+                svoice_bixbyrecognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false);
+
+        vts_dev->play_back_state = PLAY_BACK_STOPPED_STATE;
+    } else {
+        printf("playback mode is NOT Started\n");
+    }
+    pthread_mutex_unlock(&vts_dev->lock);
+    printf("%s: Exit \n", __func__);
+    return;
+}
+
+
 
 /****************** Unit test main function *************************/
 
 void print_options(struct vts_hw_device *vts_dev __unused)
 {
-    printf("********************** Generic Dual VA VTS HW Test Options ***********************\n");
+    printf("********************** Generic Dual VA VTS HW Test ***********************\n");
 #ifdef MMAP_INTERFACE_ENABLED
-    printf("********************** MMAP interface for Model Binary loading***********************\n");
+    printf("********************** MMAP interface for Model Binary loading ***********************\n");
 #else
-    printf("********************** SYSFS interface for Model Binary loading***********************\n");
+    printf("********************** SYSFS interface for Model Binary loading ***********************\n");
 #endif
-    printf("1. Voice Recoginition Start\n");
-    printf("2. Voice Recoginition Stop\n");
-    printf("3. VTS Record Start\n");
-    printf("4. VTS Record Stop\n");
-    printf("5. ODMRsvd2 Mode Start\n");
-    printf("6. ODMRsvd2 Mode Stop\n");
-    printf("7. Exit - VTS Test Application\n");
+    printf("1. Voice Bixby Recoginition Start\n");
+    printf("2. Voice Google Recoginition Start\n");
+    printf("3. Voice Recoginition Stop\n");
+    printf("4. VTS Record Start\n");
+    printf("5. VTS Record Stop\n");
+    printf("6. VTS Play Mode Start\n");
+    printf("7. VTS Play Mode Stop\n");
+    printf("8. Voice Playback Start\n");
+    printf("9. Voice Playback End\n");
+    printf("10. Exit - VTS Test Application\n");
     printf("****************************************************************!\n");
     printf("Enter an Option: \n");
     return;
@@ -876,7 +1736,9 @@ int main(void)
     vtsMixerHandle = mixer_open(VTS_MIXER_CARD);
     if (!vtsMixerHandle) {
         printf("%s: Failed to open mixer \n", __func__);
+#ifdef MMAP_INTERFACE_ENABLED
         close(vtsdev_fd);
+#endif
         return -EINVAL;
     }
 
@@ -885,7 +1747,7 @@ int main(void)
     vts_dev->vts_state = VTS_RECOGNITION_STOPPED_STATE;
     vts_dev->vts_rec_state = VTS_RECORD_STOPPED_STATE;
     vts_dev->thread_exit = false;
-    vts_dev->model_loaded = false;
+    vts_dev->model_loaded = 0;
 
     memset(fds, 0, sizeof(struct pollfd));
     fds[0].events = POLLIN;
@@ -895,7 +1757,7 @@ int main(void)
 
     while (1) {
         print_options(vts_dev);
-        ret = poll(fds,1,-1);
+        ret = poll(fds, 1, -1);
         if (fds[0].revents & POLLIN) {
             if (fgets(pstr, 50, stdin) == NULL) {
                 printf("Failed to get data from stdin \n");
@@ -909,35 +1771,44 @@ int main(void)
         printf("%s - Selected option %d\n", __func__, option);
         /* Called corresponding function based on Option selected */
         switch (option) {
-        case 1: /* Start loaded sound Model Recognition */
-            vts_recognition_start(vts_dev);
+        case MENU_START_BIXBY_RECOGNITION: /* Start loaded sound Model Recognition */
+            vts_recognition_start(vts_dev, BIXBY_MODEL);
             break;
-        case 2: /* Stop loaded sound Model Recognition */
+        case MENU_START_GOOGLE_RECOGNITION:
+            vts_recognition_start(vts_dev, GOOGLE_MODEL);
+            break;
+        case MENU_STOP_RECOGNITION: /* Stop loaded sound Model Recognition */
             vts_recognition_stop(vts_dev);
             break;
-        case 3: /* Start VTS recording */
+        case MENU_START_RECORD:
             vts_record_start(vts_dev);
             break;
-        case 4: /* Stop VTS recording */
+        case MENU_STOP_RECORD:
             vts_record_stop(vts_dev);
             break;
-        case 5:
-            vts_odmrsvd2_start(vts_dev);
+        case MENU_START_PLAY:
+            vts_play_start(vts_dev);
             break;
-        case 6:
-            vts_odmrsvd2_stop(vts_dev);
+        case MENU_STOP_PLAY:
+            vts_play_stop(vts_dev);
             break;
-        case 7:
+        case MENU_START_PLAYBACK:
+            playback_start(vts_dev);
+            break;
+        case MENU_STOP_PLAYBACK:
+            playback_stop(vts_dev);
+            break;
+        case MENU_EXIT:
             check_vts_state(vts_dev);
             printf("VTS HW Testing completed\n");
             break;
-
         default:
             printf("UNSUPPORTED Option - Try again !\n");
             break;
         }
 
-        if (option == 7) break;
+        if (option == MENU_EXIT)
+            break;
         option = 0;
     }
 

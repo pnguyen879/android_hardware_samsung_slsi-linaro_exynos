@@ -53,8 +53,8 @@
 #include"vts.h"
 #endif
 
-/* Note: odmword_uuid should be updated */
-static sound_trigger_uuid_t odmword_uuid = { 0x1817de20, 0xfa3b, 0x11e5, 0xbef2, { 0x00, 0x03, 0xa6, 0xd6, 0xc6, 0x1c } };
+/* temporary hack for okg */
+static sound_trigger_uuid_t bixby_uuid = { 0x1817de20, 0xfa3b, 0x11e5, 0xbef2, { 0x00, 0x02, 0xa5, 0xd5, 0xc5, 0x1b } };
 static sound_trigger_uuid_t hotword_uuid = { 0x7038ddc8, 0x30f2, 0x11e6, 0xb0ac, { 0x40, 0xa8, 0xf0, 0x3d, 0x3f, 0x15 } };
 
 
@@ -72,7 +72,11 @@ static void handle_stop_recognition_l(struct sound_trigger_device *stdev);
 
 // Since there's only ever one sound_trigger_device, keep it as a global so that other people can
 // dlopen this lib to get at the streaming audio.
-static struct sound_trigger_device g_stdev = { .lock = PTHREAD_MUTEX_INITIALIZER };
+static struct sound_trigger_device g_stdev = {
+    .lock = PTHREAD_MUTEX_INITIALIZER,
+    .trigger_lock = PTHREAD_MUTEX_INITIALIZER,
+    .recording_lock = PTHREAD_MUTEX_INITIALIZER
+};
 
 // Utility function for configuration MIC mixer controls
 int set_mixer_ctrls(
@@ -145,7 +149,7 @@ static int load_modelbinary(
     memcpy(stdev->mapped_addr, data, len);
 
     ALOGV("%s: %s Model loaded size[%d]", __func__,
-                (model_index == HOTWORD_INDEX ? "Google" : "ODMVoice"), len);
+                (model_index == HOTWORD_INDEX ? "Google" : "SVoice"), len);
 
     if (len > VTSDRV_MISC_MODEL_BIN_MAXSZ) {
         ALOGW("%s: buffer overflow Model size[%d] > Mapped bufsize[%d]",
@@ -156,7 +160,7 @@ static int load_modelbinary(
     if (model_index == HOTWORD_INDEX)
         ioctl_cmd = VTSDRV_MISC_IOCTL_WRITE_GOOGLE;
     else
-        ioctl_cmd = VTSDRV_MISC_IOCTL_WRITE_ODMVOICE;
+        ioctl_cmd = VTSDRV_MISC_IOCTL_WRITE_SVOICE;
 
     /* Update model binary inforation to VTS misc driver */
     if (ioctl(stdev->vtsdev_fd, ioctl_cmd, &len) < 0) {
@@ -208,9 +212,8 @@ static int sysfs_write(
 
 // Utility function for allocating a hotword recognition event. Caller receives ownership of
 // allocated struct.
-static struct sound_trigger_recognition_event *sound_trigger_hotword_event_alloc(
-        struct sound_trigger_device *stdev)
-{
+static struct sound_trigger_recognition_event *sound_trigger_event_alloc(
+        struct sound_trigger_device *stdev, int index) {
     struct sound_trigger_phrase_recognition_event *event =
             (struct sound_trigger_phrase_recognition_event *)calloc(
                     1, sizeof(struct sound_trigger_phrase_recognition_event));
@@ -220,16 +223,16 @@ static struct sound_trigger_recognition_event *sound_trigger_hotword_event_alloc
 
     event->common.status = RECOGNITION_STATUS_SUCCESS;
     event->common.type = SOUND_MODEL_TYPE_KEYPHRASE;
-    event->common.model = stdev->model_handles[HOTWORD_INDEX];
+    event->common.model = stdev->model_handles[index];
 
-    if (stdev->configs[HOTWORD_INDEX]) {
+    if (stdev->configs[index]) {
         unsigned int i;
 
-        event->num_phrases = stdev->configs[HOTWORD_INDEX]->num_phrases;
+        event->num_phrases = stdev->configs[index]->num_phrases;
         if (event->num_phrases > SOUND_TRIGGER_MAX_PHRASES)
             event->num_phrases = SOUND_TRIGGER_MAX_PHRASES;
         for (i=0; i < event->num_phrases; i++)
-            memcpy(&event->phrase_extras[i], &stdev->configs[HOTWORD_INDEX]->phrases[i],
+            memcpy(&event->phrase_extras[i], &stdev->configs[index]->phrases[i],
                    sizeof(struct sound_trigger_phrase_recognition_extra));
     }
 
@@ -251,12 +254,8 @@ static struct sound_trigger_recognition_event *sound_trigger_hotword_event_alloc
     return &event->common;
 }
 
-// Utility function for allocating a hotsound recognition event. Caller receives ownership of
-// allocated struct.
-static struct sound_trigger_recognition_event *sound_trigger_odmvoice_event_alloc(
-        struct sound_trigger_device* stdev)
-{
-#if 0 //Generic recognition event
+static struct sound_trigger_recognition_event *sound_trigger_generic_event_alloc(
+        struct sound_trigger_device *stdev, int index) {
     struct sound_trigger_generic_recognition_event *event =
             (struct sound_trigger_generic_recognition_event *)calloc(
                     1, sizeof(struct sound_trigger_generic_recognition_event));
@@ -266,45 +265,8 @@ static struct sound_trigger_recognition_event *sound_trigger_odmvoice_event_allo
 
     event->common.status = RECOGNITION_STATUS_SUCCESS;
     event->common.type = SOUND_MODEL_TYPE_GENERIC;
-    event->common.model = stdev->model_handles[ODMVOICE_INDEX];
-    // Signify that all the data is coming through streaming, not through the
-    // buffer.
-    event->common.capture_available = true;
+    event->common.model = stdev->model_handles[index];
 
-    event->common.audio_config = AUDIO_CONFIG_INITIALIZER;
-    event->common.audio_config.sample_rate = 16000;
-    event->common.audio_config.channel_mask = AUDIO_CHANNEL_IN_MONO;
-    event->common.audio_config.format = AUDIO_FORMAT_PCM_16_BIT;
-#else //as ODMVoice model
-    struct sound_trigger_phrase_recognition_event *event =
-            (struct sound_trigger_phrase_recognition_event *)calloc(
-                    1, sizeof(struct sound_trigger_phrase_recognition_event));
-    if (!event) {
-        return NULL;
-    }
-
-    event->common.status = RECOGNITION_STATUS_SUCCESS;
-    event->common.type = SOUND_MODEL_TYPE_KEYPHRASE;
-    event->common.model = stdev->model_handles[ODMVOICE_INDEX];
-
-    if (stdev->configs[ODMVOICE_INDEX]) {
-        unsigned int i;
-
-        event->num_phrases = stdev->configs[ODMVOICE_INDEX]->num_phrases;
-        if (event->num_phrases > SOUND_TRIGGER_MAX_PHRASES)
-            event->num_phrases = SOUND_TRIGGER_MAX_PHRASES;
-        for (i=0; i < event->num_phrases; i++)
-            memcpy(&event->phrase_extras[i], &stdev->configs[ODMVOICE_INDEX]->phrases[i],
-                   sizeof(struct sound_trigger_phrase_recognition_extra));
-    }
-
-    event->num_phrases = 1;
-    event->phrase_extras[0].confidence_level = 100;
-    event->phrase_extras[0].num_levels = 1;
-    event->phrase_extras[0].levels[0].level = 100;
-    event->phrase_extras[0].levels[0].user_id = 0;
-    // Signify that all the data is coming through streaming, not through the
-    // buffer.
     event->common.capture_available = true;
     event->common.trigger_in_data = false;
 
@@ -312,25 +274,47 @@ static struct sound_trigger_recognition_event *sound_trigger_odmvoice_event_allo
     event->common.audio_config.sample_rate = 16000;
     event->common.audio_config.channel_mask = AUDIO_CHANNEL_IN_MONO;
     event->common.audio_config.format = AUDIO_FORMAT_PCM_16_BIT;
-#endif
+
     return &event->common;
 }
+#ifdef STHAL_2_3
+const struct sound_trigger_properties_header* stdev_get_properties_extended(
+        const struct sound_trigger_hw_device *dev) {
+    struct sound_trigger_device *stdev = (struct sound_trigger_device *)dev;
 
+    ALOGI("%s: enter", __func__);
+
+    if (stdev == NULL)
+        return NULL;
+
+    return (struct sound_trigger_properties_header *)&hw_properties_1_3;
+}
+#endif
 static int stdev_get_properties(
         const struct sound_trigger_hw_device *dev,
         struct sound_trigger_properties *properties)
 {
     struct sound_trigger_device *stdev = (struct sound_trigger_device *)dev;
+    int google_version = 0;
 
     ALOGI("%s", __func__);
     if (stdev == NULL || properties == NULL) {
         return -EINVAL;
     }
+
+    pthread_mutex_lock(&stdev->lock);
+    if (ioctl(stdev->vtsdev_fd, VTSDRV_MISC_IOCTL_READ_GOOGLE_VERSION, &google_version) < 0) {
+        ALOGE("%s: VTSDRV_MISC_IOCTL_READ_GOOGLE_VERSION failed", __func__);
+        //return -EINVAL;
+    }
+    pthread_mutex_unlock(&stdev->lock);
+    ALOGI("%s Google Version : %d", __func__, google_version);
     memcpy(properties, &hw_properties, sizeof(struct sound_trigger_properties));
+    properties->version = google_version;
     return 0;
 }
 
-//Parses Extra config structure data, for ODMVoice specification information
+//Parses Extra config structure data, for SVoice specification information
 static void ParseExtraConfigData(
         struct sound_trigger_device *stdev,
         const char *keyValuePairs)
@@ -345,29 +329,22 @@ static void ParseExtraConfigData(
         return;
     }
 
-	/* Note: if any Extra config data is defined by ODM,
-	 * parsing strings should updated as ODM specific requirements
-	 * Information that can be set in extra data,
-	 * 1. Backlog_size: How many ms of previous data to be captured from the trigger word
-	 * 2. Voice trigger mode: ODM specific, other default trigger mode will be used
-	*/
-
     // get backlog_size
-    ret = str_parms_get_int(parms, "backlog_size", &value);
+    ret = str_parms_get_int(parms, "voice_trig", &value);
     if (ret >= 0) {
-        ALOGV("backlog_size = (%d)", value);
+        ALOGV("voice_trigger = (%d)", value);
         stdev->backlog_size = value;
-        str_parms_del(parms, "backlog_size");
+        str_parms_del(parms, "voice_trig");
     }
 
-    /* ODM specific voice trigger mode if any
-     * currently 3 modes as reserved1, reserved2 & default one ODM Voice trigger mode
-    */
-    ret = str_parms_get_int(parms, "voice_trigger_mode", &value);
+    // wakeup_mode : 1 => bixby (LPSD + voice trigger)
+    // wakeup_mode : 2 => LPSD(babycry/doorbell)
+    // wakeup_mode : 3 => bixby (only voice trigger)
+    ret = str_parms_get_int(parms, "wakeup_mode", &value);
     if (ret >= 0) {
-        ALOGV("voice_trigger_mode = (%d)", value);
-        stdev->odmvoicemodel_mode = value;
-        str_parms_del(parms, "voice_trigger_mode");
+        ALOGV("wakeup_mode = (%d)", value);
+        stdev->svoicemodel_mode = value;
+        str_parms_del(parms, "wakeup_mode");
     }
     str_parms_destroy(parms);
 }
@@ -380,6 +357,7 @@ static void stdev_vts_set_mic(
 {
     char **active_mic_ctrls = NULL;
     int *ctrl_values = NULL;
+    int ctrl_count = MAIN_MIC_CONTROL_COUNT;
 
     if (enable_mic != 0) {
         /* Check whether MIC controls are configured or not, if not configure first */
@@ -391,9 +369,10 @@ static void stdev_vts_set_mic(
             if (stdev->active_mic == VTS_HEADSET_MIC) {
                 active_mic_ctrls = headset_mic_ctlname;
                 ctrl_values = headset_mic_ctlvalue;
+                ctrl_count = HEADSET_MIC_CONTROL_COUNT;
             }
 
-            if (set_mixer_ctrls(stdev, active_mic_ctrls, ctrl_values, MAIN_MIC_CONTROL_COUNT, false)) {
+            if (set_mixer_ctrls(stdev, active_mic_ctrls, ctrl_values, ctrl_count, false)) {
                 ALOGW("%s: Enabling MIC control configuration Failed", __func__);
             }
             stdev->is_mic_configured = 1;
@@ -402,12 +381,14 @@ static void stdev_vts_set_mic(
     } else {
         active_mic_ctrls = main_mic_ctlname;
 
-        if (stdev->active_mic == VTS_HEADSET_MIC)
+        if (stdev->active_mic == VTS_HEADSET_MIC) {
             active_mic_ctrls = headset_mic_ctlname;
+            ctrl_count = HEADSET_MIC_CONTROL_COUNT;
+        }
 
         /* Reset MIC controls for disabling VTS */
         if (stdev->is_mic_configured) {
-            if (set_mixer_ctrls(stdev, active_mic_ctrls, NULL, MAIN_MIC_CONTROL_COUNT, true)) {
+            if (set_mixer_ctrls(stdev, active_mic_ctrls, NULL, ctrl_count, true)) {
                 ALOGW("%s: Enabling MIC control configuration Failed", __func__);
             }
             stdev->is_mic_configured = 0;
@@ -417,7 +398,32 @@ static void stdev_vts_set_mic(
 
     return;
 }
+#ifdef STHAL_2_3
+static int stdev_set_parameter(const struct sound_trigger_hw_device *dev __unused,
+                                   sound_model_handle_t handle __unused,
+                                   sound_trigger_model_parameter_t param __unused,
+                                   int32_t value __unused) {
+    ALOGI("%s: enter", __func__);
 
+    return 0;
+}
+
+static int stdev_get_parameter(const struct sound_trigger_hw_device *dev __unused,
+        sound_model_handle_t handle __unused, sound_trigger_model_parameter_t param __unused,
+        int32_t *value __unused) {
+    ALOGI("%s: enter", __func__);
+
+    return 0;
+}
+
+static int stdev_query_parameter(const struct sound_trigger_hw_device *dev __unused,
+        sound_model_handle_t handle __unused, sound_trigger_model_parameter_t param __unused,
+        sound_trigger_model_parameter_range_t *param_range __unused) {
+    ALOGI("%s: enter", __func__);
+
+    return 0;
+}
+#endif
 // If enabled_algorithms = 0, then the VTS will be turned off. Otherwise, treated as a bit mask for
 // which algorithms should be enabled on the VTS. Must be called with the stdev->lock held.
 static void stdev_vts_set_power(
@@ -443,7 +449,7 @@ static void stdev_vts_set_power(
         if (enabled_algorithms & (0x1 << HOTWORD_INDEX)) {
             ALOGV("%s: Google Model recognization start", __func__);
             if (set_mixer_ctrls(stdev, model_recognize_start_ctlname,
-                hotword_recognize_start_ctlvalue, MODEL_CONTROL_COUNT, false)) {
+                hotword_recognize_start_ctlvalue, MODEL_START_CONTROL_COUNT, false)) {
                 ALOGE("%s: Google Model recognization start Failed", __func__);
                 goto exit;
             }
@@ -454,52 +460,52 @@ static void stdev_vts_set_power(
             ALOGD("%s: Google Model recognization started & Notified to AudioHAL", __func__);
         }
 
-        if (enabled_algorithms & (0x1 << ODMVOICE_INDEX)) {
+        if (enabled_algorithms & (0x1 << SVOICE_INDEX)) {
             int *ctrl_values = NULL;
 
-            if (stdev->odmvoicemodel_mode == ODMVOICE_RESERVED1_MODE)
-                ctrl_values = odmvoice_reserved1recognize_start_ctlvalue;
-            else if (stdev->odmvoicemodel_mode == ODMVOICE_RESERVED2_MODE)
-                ctrl_values = odmvoice_reserved2recognize_start_ctlvalue;
-            else if (stdev->odmvoicemodel_mode == ODMVOICE_TRIGGER_MODE)
-                ctrl_values = odmvoice_triggerrecognize_start_ctlvalue;
+            if (stdev->svoicemodel_mode == SVOICE_BIXBY_MODE)
+                ctrl_values = svoice_bixbyrecognize_start_ctlvalue;
+            else if (stdev->svoicemodel_mode == SVOICE_LPSD_MODE)
+                ctrl_values = svoice_lpsdrecognize_start_ctlvalue;
+            else if (stdev->svoicemodel_mode == SVOICE_BIXBY_ALWAYS_MODE)
+                ctrl_values = svoice_bixbyalwaysrecognize_start_ctlvalue;
             else {
-                ALOGE("%s: Unknown ODMVoice recognition mode to start, set default ODMVoice Trigger mode", __func__);
-                ctrl_values = odmvoice_triggerrecognize_start_ctlvalue;
+                ALOGE("%s: Unknown Svoice recognition mode to start, set default bixby mode", __func__);
+                ctrl_values = svoice_bixbyrecognize_start_ctlvalue;
             }
 
-            ALOGV("%s: ODMVoice Model [%s] recognization start", __func__,
-                ((stdev->odmvoicemodel_mode == ODMVOICE_RESERVED2_MODE) ?
-                "ODM Reserved2 mode" : ((stdev->odmvoicemodel_mode == ODMVOICE_RESERVED1_MODE) ?
-                "ODM Reserved1 mode" : "ODMVoice trigger mode")));
+            ALOGV("%s: Svoice Model [%s] recognization start", __func__,
+                ((stdev->svoicemodel_mode == SVOICE_LPSD_MODE) ?
+                "BabyCry" : ((stdev->svoicemodel_mode == SVOICE_BIXBY_MODE) ?
+                "Bixby" : "Bixby Always")));
             if (set_mixer_ctrls(stdev, model_recognize_start_ctlname,
-                        ctrl_values, MODEL_CONTROL_COUNT, false)) {
-                ALOGE("%s: ODMVoice Model recognization start Failed", __func__);
+                        ctrl_values, MODEL_START_CONTROL_COUNT, false)) {
+                ALOGE("%s: Svoice Model recognization start Failed", __func__);
                 goto exit;
             }
 
             /* handle backlog control size */
-            if ((stdev->odmvoicemodel_mode == ODMVOICE_RESERVED1_MODE ||
-                stdev->odmvoicemodel_mode == ODMVOICE_TRIGGER_MODE) &&
+            if ((stdev->svoicemodel_mode == SVOICE_BIXBY_MODE ||
+                stdev->svoicemodel_mode == SVOICE_BIXBY_ALWAYS_MODE) &&
                 stdev->backlog_size) {
                 if (set_mixer_ctrls(stdev, model_backlog_size_ctlname,
                             &stdev->backlog_size, MODEL_BACKLOG_CONTROL_COUNT, false)) {
-                    ALOGE("%s: ODMVoice Model backlog size configuration Failed", __func__);
+                    ALOGE("%s: Svoice Model backlog size configuration Failed", __func__);
                     goto exit;
                 }
-                ALOGD("%s: ODMVoice Model Backlog size [%d] configured", __func__, stdev->backlog_size);
+                ALOGD("%s: Svoice Model Backlog size [%d] configured", __func__, stdev->backlog_size);
             }
-            stdev->recognize_started |= (0x1 << ODMVOICE_INDEX);
-            ALOGD("%s: ODMVoice Model [%s] recognization started", __func__,
-                ((stdev->odmvoicemodel_mode == ODMVOICE_RESERVED2_MODE) ?
-                "ODM Reserved2 mode" : ((stdev->odmvoicemodel_mode == ODMVOICE_RESERVED1_MODE) ?
-                "ODM Reserved1 mode" : "ODMVoice trigger mode")));
+            stdev->recognize_started |= (0x1 << SVOICE_INDEX);
+            ALOGD("%s: Svoice Model [%s] recognization started", __func__,
+                ((stdev->svoicemodel_mode == SVOICE_LPSD_MODE) ?
+                "BabyCry" : ((stdev->svoicemodel_mode == SVOICE_BIXBY_MODE) ?
+                "Bixby" : "Bixby Always")));
         }
     } else {
         /* Stop recognition of previous started models */
         if (stdev->recognize_started & (0x1 << HOTWORD_INDEX)) {
             if (set_mixer_ctrls(stdev, model_recognize_stop_ctlname,
-                hotword_recognize_stop_ctlvalue, MODEL_CONTROL_COUNT, false)) {
+                hotword_recognize_stop_ctlvalue, MODEL_STOP_CONTROL_COUNT, false)) {
                 ALOGE("%s: Google Model recognization stop Failed", __func__);
                 goto exit;
             }
@@ -510,30 +516,30 @@ static void stdev_vts_set_power(
             ALOGD("%s: Google Model recognization stopped & Notified to AudioHAL", __func__);
         }
 
-        if (stdev->recognize_started & (0x1 << ODMVOICE_INDEX)) {
+        if (stdev->recognize_started & (0x1 << SVOICE_INDEX)) {
             int *ctrl_values = NULL;
 
-            if (stdev->odmvoicemodel_mode == ODMVOICE_RESERVED1_MODE)
-                ctrl_values = odmvoice_reserved1recognize_stop_ctlvalue;
-            else if (stdev->odmvoicemodel_mode == ODMVOICE_RESERVED2_MODE)
-                ctrl_values = odmvoice_reserved2recognize_stop_ctlvalue;
-            else if (stdev->odmvoicemodel_mode == ODMVOICE_TRIGGER_MODE)
-                ctrl_values = odmvoice_triggerrecognize_stop_ctlvalue;
+            if (stdev->svoicemodel_mode == SVOICE_BIXBY_MODE)
+                ctrl_values = svoice_bixbyrecognize_stop_ctlvalue;
+            else if (stdev->svoicemodel_mode == SVOICE_LPSD_MODE)
+                ctrl_values = svoice_lpsdrecognize_stop_ctlvalue;
+            else if (stdev->svoicemodel_mode == SVOICE_BIXBY_ALWAYS_MODE)
+                ctrl_values = svoice_bixbyalwaysrecognize_stop_ctlvalue;
             else {
-                ALOGE("%s: Unknown ODMVoice recognition mode to stop, use default ODMVoice Trigger mode", __func__);
-                ctrl_values = odmvoice_triggerrecognize_stop_ctlvalue;
+                ALOGE("%s: Unknown Svoice recognition mode to stop, set default bixby mode", __func__);
+                ctrl_values = svoice_bixbyrecognize_stop_ctlvalue;
             }
 
             if (set_mixer_ctrls(stdev, model_recognize_stop_ctlname,
-                ctrl_values, MODEL_CONTROL_COUNT, false)) {
-                ALOGE("%s: ODMVoice Model recognization stop Failed", __func__);
+                ctrl_values, MODEL_STOP_CONTROL_COUNT, false)) {
+                ALOGE("%s: Svoice Model recognization stop Failed", __func__);
                 goto exit;
             }
-            stdev->recognize_started &= ~(0x1 << ODMVOICE_INDEX);
-            ALOGD("%s: ODMVoice Model [%s] recognization stopped", __func__,
-                ((stdev->odmvoicemodel_mode == ODMVOICE_RESERVED2_MODE) ?
-                "ODM Reserved2 mode" : ((stdev->odmvoicemodel_mode == ODMVOICE_RESERVED1_MODE) ?
-                "ODM Reserved1 mode" : "ODMVoice trigger mode")));
+            stdev->recognize_started &= ~(0x1 << SVOICE_INDEX);
+            ALOGD("%s: Svoice Model [%s] recognization stopped", __func__,
+                ((stdev->svoicemodel_mode == SVOICE_LPSD_MODE) ?
+                "BabyCry" : ((stdev->svoicemodel_mode == SVOICE_BIXBY_MODE) ?
+                "Bixby" : "Bixby Always")));
         }
 
         if (!stdev->recognize_started && !stdev->is_recording) {
@@ -684,8 +690,8 @@ static int vts_load_sound_model(
 #else
         ret = sysfs_write(VTS_HOTWORD_MODEL, buffer, buffer_len);
 #endif
-    } else if (model_index == ODMVOICE_INDEX) {
-        /* load ODMVoice model binary */
+    } else if (model_index == SVOICE_INDEX) {
+        /* load SVoice model binary */
 #ifdef MMAP_INTERFACE_ENABLED
         ret = load_modelbinary(stdev, model_index, buffer, buffer_len);
 #else
@@ -728,6 +734,7 @@ static void *callback_thread_loop(void *context)
     struct pollfd fds[2];
     int err = 0;
     int i, n;
+    int recoveryCnt = 0;
 
     ALOGI("%s", __func__);
     prctl(PR_SET_NAME, (unsigned long)"sound trigger callback", 0, 0, 0);
@@ -760,18 +767,26 @@ static void *callback_thread_loop(void *context)
             }
             for (i = 0; i < n;) {
                 if (strstr(msg + i, "VOICE_WAKEUP_WORD_ID=1") ||
-                    strstr(msg + i, "VOICE_WAKEUP_WORD_ID=2") ||
-                    strstr(msg + i, "VOICE_WAKEUP_WORD_ID=3")) {
+                    strstr(msg + i, "VOICE_WAKEUP_WORD_ID=LPSD") ||
+                    strstr(msg + i, "VOICE_WAKEUP_WORD_ID=2")) {
                     struct sound_trigger_recognition_event *event = NULL;
                     int trigger_index = 0;
 
                     if (strstr(msg + i, "VOICE_WAKEUP_WORD_ID=1")||
-                        strstr(msg + i, "VOICE_WAKEUP_WORD_ID=3")) {
-                            event = sound_trigger_odmvoice_event_alloc(stdev);
-                            trigger_index = ODMVOICE_INDEX;
-                            ALOGI("%s ODMVOICE Event Triggerred %d", __func__, trigger_index);
+                        strstr(msg + i, "VOICE_WAKEUP_WORD_ID=LPSD")) {
+                        if (stdev->is_generic & (0x1 << SVOICE_INDEX))
+                            event = sound_trigger_generic_event_alloc(stdev, SVOICE_INDEX);
+                        else
+                            event = sound_trigger_event_alloc(stdev, SVOICE_INDEX);
+
+                            trigger_index = SVOICE_INDEX;
+                            ALOGI("%s SVOICE Event Triggerred %d", __func__, trigger_index);
                     } else {
-                            event = sound_trigger_hotword_event_alloc(stdev);
+                        if (stdev->is_generic & (0x1 << HOTWORD_INDEX))
+                            event = sound_trigger_generic_event_alloc(stdev, HOTWORD_INDEX);
+                        else
+                            event = sound_trigger_event_alloc(stdev, HOTWORD_INDEX);
+
                             trigger_index = HOTWORD_INDEX;
                             ALOGI("%s HOTWORD Event Triggered --%d", __func__, trigger_index);
                     }
@@ -793,13 +808,13 @@ static void *callback_thread_loop(void *context)
                             stdev->configs[trigger_index] &&
                             stdev->configs[trigger_index]->capture_requested) {
                             ALOGI("%s Streaming Enabled for %s", __func__, (trigger_index ?
-                                        "ODMVOICE" : "HOTWORD"));
+                                        "SVOICE" : "HOTWORD"));
                             stdev->is_streaming = (0x1 << trigger_index);
                             goto exit;
                         } else {
                             /* Error handling if models stop-recognition failed */
                             if ((stdev->model_stopfailedhandles[HOTWORD_INDEX] != HANDLE_NONE) ||
-                                (stdev->model_stopfailedhandles[ODMVOICE_INDEX] != HANDLE_NONE) ||
+                                (stdev->model_stopfailedhandles[SVOICE_INDEX] != HANDLE_NONE) ||
                                 stdev->model_execstate[trigger_index] == MODEL_STATE_STOPABORT) {
                                 handle_stop_recognition_l(stdev);
                                 stdev->model_execstate[trigger_index] = MODEL_STATE_NONE;
@@ -828,7 +843,24 @@ static void *callback_thread_loop(void *context)
             ALOGI("%s: Termination message", __func__);
             break;
         } else {
-            ALOGI("%s: Message to ignore", __func__);
+            ALOGI("%s: uevent %d %d / err : %d", __func__, fds[0].revents, fds[1].revents, err);
+            if ((fds[0].revents & POLLERR) ||
+                (fds[0].revents & POLLHUP)) {
+                recoveryCnt++;
+                if (recoveryCnt > 1) {
+                    ALOGE("%s: Socket Recovery Fail", __func__);
+                    goto exit;
+                }
+                ALOGI("%s: Socket Error : Recovery", __func__);
+                close(fds[0].fd);
+                stdev->uevent_socket = uevent_open_socket(64*1024, true);
+                if (stdev->uevent_socket == -1) {
+                    ALOGE("%s: Failed to open uevent socket", __func__);
+                    goto exit;
+                }
+                fds[0].events = POLLIN;
+                fds[0].fd = stdev->uevent_socket;
+            }
         }
         stdev->recog_cbstate = RECOG_CB_NONE;
         pthread_mutex_unlock(&stdev->lock);
@@ -876,11 +908,13 @@ static int stdev_load_sound_model(
 
     /* TODO: Figure out what the model type is by looking at the UUID? */
     if (sound_model->type == SOUND_MODEL_TYPE_KEYPHRASE) {
-        if (!memcmp(&sound_model->vendor_uuid, &odmword_uuid, sizeof(sound_trigger_uuid_t))) {
-            model_index = ODMVOICE_INDEX;
-            ALOGV("%s ODMVOICE_INDEX Sound Model", __func__);
+        if (!memcmp(&sound_model->vendor_uuid, &bixby_uuid, sizeof(sound_trigger_uuid_t))) {
+            model_index = SVOICE_INDEX;
+            stdev->is_generic &= ~(0x1 << SVOICE_INDEX);
+            ALOGV("%s SVOICE_INDEX Sound Model", __func__);
         } else if (!memcmp(&sound_model->vendor_uuid, &hotword_uuid, sizeof(sound_trigger_uuid_t))) {
             model_index = HOTWORD_INDEX;
+            stdev->is_generic &= ~(0x1 << HOTWORD_INDEX);
             ALOGV("%s HOTWORD_INDEX Sound Model", __func__);
         } else {
             ALOGE("%s Invalid UUID: {0x%x, 0x%x, 0x%x, 0x%x \n {0x%x 0x%x 0x%x 0x%x 0x%x 0x%x}}", __func__,
@@ -893,9 +927,14 @@ static int stdev_load_sound_model(
             goto exit;
         }
     } else if (sound_model->type == SOUND_MODEL_TYPE_GENERIC) {
-        if (!memcmp(&sound_model->vendor_uuid, &odmword_uuid, sizeof(sound_trigger_uuid_t))) {
-            model_index = ODMVOICE_INDEX;
-            ALOGV("%s ODMVOICE_INDEX Sound Model", __func__);
+        if (!memcmp(&sound_model->vendor_uuid, &bixby_uuid, sizeof(sound_trigger_uuid_t))) {
+            model_index = SVOICE_INDEX;
+            stdev->is_generic |= (0x1 << SVOICE_INDEX);
+            ALOGV("%s SVOICE_INDEX Sound Model", __func__);
+        } else if (!memcmp(&sound_model->vendor_uuid, &hotword_uuid, sizeof(sound_trigger_uuid_t))) {
+            model_index = HOTWORD_INDEX;
+            stdev->is_generic |= (0x1 << HOTWORD_INDEX);
+            ALOGV("%s HOTWORD_INDEX Sound Model", __func__);
         } else {
             ALOGE("%s Generic Invalid UUID: {0x%x, 0x%x, 0x%x, 0x%x \n {0x%x 0x%x 0x%x 0x%x 0x%x 0x%x}}",
                 __func__, sound_model->vendor_uuid.timeLow, sound_model->vendor_uuid.timeMid,
@@ -964,7 +1003,91 @@ exit:
     pthread_mutex_unlock(&stdev->lock);
     return ret;
 }
+#ifdef STHAL_2_3
+static int stdev_start_recognition_extended(
+        const struct sound_trigger_hw_device *dev,
+        sound_model_handle_t handle,
+        const struct sound_trigger_recognition_config_header *config,
+        recognition_callback_t callback,
+        void *cookie)
+{
+    struct sound_trigger_device *stdev = (struct sound_trigger_device *)dev;
+    struct sound_trigger_recognition_config_extended_1_3 *configs = (struct sound_trigger_recognition_config_extended_1_3 *)config;
+    int ret = 0;
 
+    ALOGI("%s Handle %d", __func__, handle);
+
+    pthread_mutex_lock(&stdev->lock);
+    pthread_mutex_lock(&stdev->trigger_lock);
+    if (handle < 0 || handle >= MAX_SOUND_MODELS || stdev->model_handles[handle] != handle) {
+         ALOGE("%s: Handle doesn't match", __func__);
+        ret = -ENOSYS;
+        goto exit;
+    }
+    if (stdev->recognition_callbacks[handle] != NULL) {
+         ALOGW("%s:model recognition is already started Checking for error state", __func__);
+         /* Error handling if models stop-recognition failed */
+         if ((stdev->model_stopfailedhandles[HOTWORD_INDEX] != HANDLE_NONE) ||
+             (stdev->model_stopfailedhandles[SVOICE_INDEX] != HANDLE_NONE)) {
+             handle_stop_recognition_l(stdev);
+             ALOGI("%s stop-recognition error state handled", __func__);
+         }
+    }
+
+    if (stdev->voicecall_state == VOICECALL_STARTED) {
+        ALOGI("%s VoiceCall in progress", __func__);
+        ret = -EBUSY;
+        goto exit;
+    }
+
+    // Copy the config for this handle.
+    if (config) {
+        if (stdev->configs[handle]) {
+            free(stdev->configs[handle]);
+        }
+        stdev->configs[handle] = malloc(sizeof(configs->base));
+        if (!stdev->configs[handle]) {
+            ret = -ENOMEM;
+            goto exit;
+        }
+        memcpy(stdev->configs[handle], &configs->base, sizeof(configs->base));
+
+        /* Check whether config has extra inforamtion */
+        if (configs->base.data_size > 0) {
+            char *params = (char*)configs + sizeof(*configs);
+            // reset & update user data
+            stdev->backlog_size = 0;
+            stdev->svoicemodel_mode = SVOICE_UNKNOWN_MODE;
+            if (params)
+                ParseExtraConfigData(stdev, params);
+        }
+    }
+
+    ret = stdev_start_callback_thread(stdev);
+    if (ret) {
+        goto exit;
+    }
+
+    stdev->recognition_callbacks[handle] = callback;
+    stdev->recognition_cookies[handle] = cookie;
+
+    // Reconfigure the VTS to run any algorithm that have a callback.
+    if (!stdev->is_streaming ||
+            (stdev->is_streaming & (0x1 << handle))) {
+        ALOGI("Starting VTS Recognition\n");
+        stdev_vts_set_power(stdev, 0);
+        stdev_vts_set_power(stdev, stdev_active_callback_bitmask(stdev));
+    }
+
+    stdev->model_stopfailedhandles[handle] = HANDLE_NONE;
+    stdev->model_execstate[handle] = MODEL_STATE_RUNNING;
+    ALOGI("%s Handle Exit %d", __func__, handle);
+exit:
+    pthread_mutex_unlock(&stdev->trigger_lock);
+    pthread_mutex_unlock(&stdev->lock);
+    return ret;
+}
+#endif
 static int stdev_start_recognition(
         const struct sound_trigger_hw_device *dev,
         sound_model_handle_t handle,
@@ -976,7 +1099,9 @@ static int stdev_start_recognition(
     int ret = 0;
 
     ALOGI("%s Handle %d", __func__, handle);
+
     pthread_mutex_lock(&stdev->lock);
+    pthread_mutex_lock(&stdev->trigger_lock);
     if (handle < 0 || handle >= MAX_SOUND_MODELS || stdev->model_handles[handle] != handle) {
          ALOGE("%s: Handle doesn't match", __func__);
         ret = -ENOSYS;
@@ -986,7 +1111,7 @@ static int stdev_start_recognition(
          ALOGW("%s:model recognition is already started Checking for error state", __func__);
          /* Error handling if models stop-recognition failed */
          if ((stdev->model_stopfailedhandles[HOTWORD_INDEX] != HANDLE_NONE) ||
-             (stdev->model_stopfailedhandles[ODMVOICE_INDEX] != HANDLE_NONE)) {
+             (stdev->model_stopfailedhandles[SVOICE_INDEX] != HANDLE_NONE)) {
              handle_stop_recognition_l(stdev);
              ALOGI("%s stop-recognition error state handled", __func__);
          }
@@ -1015,7 +1140,7 @@ static int stdev_start_recognition(
             char *params = (char*)config + sizeof(*config);
             // reset & update user data
             stdev->backlog_size = 0;
-            stdev->odmvoicemodel_mode = ODMVOICE_UNKNOWN_MODE;
+            stdev->svoicemodel_mode = SVOICE_UNKNOWN_MODE;
             if (params)
                 ParseExtraConfigData(stdev, params);
         }
@@ -1041,6 +1166,7 @@ static int stdev_start_recognition(
     stdev->model_execstate[handle] = MODEL_STATE_RUNNING;
     ALOGI("%s Handle Exit %d", __func__, handle);
 exit:
+    pthread_mutex_unlock(&stdev->trigger_lock);
     pthread_mutex_unlock(&stdev->lock);
     return ret;
 }
@@ -1090,8 +1216,12 @@ static int stdev_stop_recognition(
     } else
         ALOGV("%s Handle %d Trylock acquired successfully", __func__, handle);
 
+    pthread_mutex_lock(&stdev->trigger_lock);
+    ALOGV("%s Handle %d Trigger-Trylock successfully", __func__, handle);
+
     ret = stdev_stop_recognition_l(stdev, handle);
 
+    pthread_mutex_unlock(&stdev->trigger_lock);
     pthread_mutex_unlock(&stdev->lock);
     ALOGI("%s Handle Exit %d", __func__, handle);
     return ret;
@@ -1194,6 +1324,7 @@ int sound_trigger_open_for_streaming()
     ALOGV("%s", __func__);
 
     pthread_mutex_lock(&stdev->lock);
+    pthread_mutex_lock(&stdev->trigger_lock);
 
     if (!stdev->sthal_opened) {
         ALOGE("%s: stdev has not been opened", __func__);
@@ -1233,6 +1364,7 @@ int sound_trigger_open_for_streaming()
     stdev->is_seamless_recording = true;
     ret = 1;
 exit:
+    pthread_mutex_unlock(&stdev->trigger_lock);
     pthread_mutex_unlock(&stdev->lock);
     return ret;
 }
@@ -1254,8 +1386,7 @@ size_t sound_trigger_read_samples(
         return -EINVAL;
     }
 
-    pthread_mutex_lock(&stdev->lock);
-
+    pthread_mutex_lock(&stdev->trigger_lock);
     if (!stdev->sthal_opened) {
         ALOGE("%s: stdev has not been opened", __func__);
         ret = -EFAULT;
@@ -1283,7 +1414,7 @@ size_t sound_trigger_read_samples(
     }
 
 exit:
-    pthread_mutex_unlock(&stdev->lock);
+    pthread_mutex_unlock(&stdev->trigger_lock);
     return ret;
 }
 
@@ -1302,6 +1433,7 @@ int sound_trigger_close_for_streaming(int audio_handle __unused)
     }
 
     pthread_mutex_lock(&stdev->lock);
+    pthread_mutex_lock(&stdev->trigger_lock);
 
     if (!stdev->sthal_opened) {
         ALOGE("%s: stdev has not been opened", __func__);
@@ -1340,6 +1472,7 @@ int sound_trigger_close_for_streaming(int audio_handle __unused)
         stdev_vts_set_power(stdev, active_bitmask);
     }
 exit:
+    pthread_mutex_unlock(&stdev->trigger_lock);
     pthread_mutex_unlock(&stdev->lock);
     return ret;
 }
@@ -1355,6 +1488,7 @@ int sound_trigger_open_recording()
     ALOGV("%s", __func__);
 
     pthread_mutex_lock(&stdev->lock);
+    pthread_mutex_lock(&stdev->recording_lock);
 
     if (!stdev->sthal_opened) {
         ALOGE("%s: stdev has not been opened", __func__);
@@ -1404,6 +1538,7 @@ int sound_trigger_open_recording()
     stdev->is_recording = true;
     ret = 1;
 exit:
+    pthread_mutex_unlock(&stdev->recording_lock);
     pthread_mutex_unlock(&stdev->lock);
     return ret;
 }
@@ -1414,12 +1549,11 @@ size_t sound_trigger_read_recording_samples(
         size_t  buffer_len)
 {
     struct sound_trigger_device *stdev = &g_stdev;
-//    int i;
+    // int i;
     size_t ret = 0;
 
     //ALOGV("%s", __func__);
-
-    pthread_mutex_lock(&stdev->lock);
+    pthread_mutex_lock(&stdev->recording_lock);
 
     if (!stdev->sthal_opened) {
         ALOGE("%s: stdev has not been opened", __func__);
@@ -1448,7 +1582,7 @@ size_t sound_trigger_read_recording_samples(
     }
 
 exit:
-    pthread_mutex_unlock(&stdev->lock);
+    pthread_mutex_unlock(&stdev->recording_lock);
     return ret;
 }
 
@@ -1462,6 +1596,7 @@ int sound_trigger_close_recording()
     ALOGV("%s", __func__);
 
     pthread_mutex_lock(&stdev->lock);
+    pthread_mutex_lock(&stdev->recording_lock);
 
     if (!stdev->sthal_opened) {
         ALOGE("%s: stdev has not been opened", __func__);
@@ -1477,7 +1612,7 @@ int sound_trigger_close_recording()
 
     /* Error handling if models stop-recognition failed */
     if ((stdev->model_stopfailedhandles[HOTWORD_INDEX] != HANDLE_NONE) ||
-        (stdev->model_stopfailedhandles[ODMVOICE_INDEX] != HANDLE_NONE)) {
+        (stdev->model_stopfailedhandles[SVOICE_INDEX] != HANDLE_NONE)) {
         handle_stop_recognition_l(stdev);
         ALOGI("%s stop-recognition error state handled", __func__);
     }
@@ -1500,6 +1635,7 @@ int sound_trigger_close_recording()
 
     stdev->is_recording = false;
 exit:
+    pthread_mutex_unlock(&stdev->recording_lock);
     pthread_mutex_unlock(&stdev->lock);
     return ret;
 }
@@ -1529,8 +1665,10 @@ int sound_trigger_headset_status(int is_connected)
             ALOGI("%s: Close VTS Record PCM to reconfigure active Mic", __func__);
             // Close record PCM before changing MIC
             if (stdev->recording_pcm) {
+                pthread_mutex_lock(&stdev->recording_lock);
                 pcm_close(stdev->recording_pcm);
                 stdev->recording_pcm = NULL;
+                pthread_mutex_unlock(&stdev->recording_lock);
             }
             stdev->is_recording = false;
         }
@@ -1540,8 +1678,10 @@ int sound_trigger_headset_status(int is_connected)
             ALOGI("%s: Close VTS Seamless PCM to reconfigure active Mic", __func__);
             // Close seamless PCM before changing MIC
             if (stdev->streaming_pcm) {
+                pthread_mutex_lock(&stdev->trigger_lock);
                 pcm_close(stdev->streaming_pcm);
                 stdev->streaming_pcm = NULL;
+                pthread_mutex_unlock(&stdev->trigger_lock);
             }
             stdev->is_seamless_recording = false;
         }
@@ -1595,8 +1735,10 @@ int sound_trigger_headset_status(int is_connected)
                 if (stdev->streaming_pcm && !pcm_is_ready(stdev->streaming_pcm)) {
                     ALOGE("%s: failed to open streaming PCM", __func__);
                     if (stdev->recording_pcm) {
+                        pthread_mutex_lock(&stdev->recording_lock);
                         pcm_close(stdev->recording_pcm);
                         stdev->recording_pcm = NULL;
+                        pthread_mutex_unlock(&stdev->recording_lock);
                     }
                     ret = -EFAULT;
                     goto exit;
@@ -1639,8 +1781,10 @@ int sound_trigger_voicecall_status(int callstate)
                 ALOGI("%s: Close VTS Record PCM to reconfigure active Mic", __func__);
                 // Close record PCM before changing MIC
                 if (stdev->recording_pcm) {
+                    pthread_mutex_lock(&stdev->recording_lock);
                     pcm_close(stdev->recording_pcm);
                     stdev->recording_pcm = NULL;
+                    pthread_mutex_unlock(&stdev->recording_lock);
                 }
                 stdev->is_recording = false;
             }
@@ -1650,8 +1794,10 @@ int sound_trigger_voicecall_status(int callstate)
                 ALOGI("%s: Close VTS Seamless PCM to reconfigure active Mic", __func__);
                 // Close seamless PCM before changing MIC
                 if (stdev->streaming_pcm) {
+                    pthread_mutex_lock(&stdev->trigger_lock);
                     pcm_close(stdev->streaming_pcm);
                     stdev->streaming_pcm = NULL;
+                    pthread_mutex_unlock(&stdev->trigger_lock);
                 }
                 stdev->is_seamless_recording = false;
                 stdev->is_streaming = false;
@@ -1661,7 +1807,7 @@ int sound_trigger_voicecall_status(int callstate)
             active_bitmask = stdev_active_callback_bitmask(stdev);
             stdev_vts_set_power(stdev, 0);
             stdev->recognition_callbacks[HOTWORD_INDEX] = NULL;
-            stdev->recognition_callbacks[ODMVOICE_INDEX] = NULL;
+            stdev->recognition_callbacks[SVOICE_INDEX] = NULL;
         }
         /* update voicecall status */
         stdev->voicecall_state = VOICECALL_STARTED;
@@ -1765,12 +1911,20 @@ static int stdev_open(
 
     stdev->device.common.tag = HARDWARE_DEVICE_TAG;
     stdev->device.common.version = SOUND_TRIGGER_DEVICE_API_VERSION_1_0;
+#ifdef STHAL_2_3
+    stdev->device.common.version = SOUND_TRIGGER_DEVICE_API_VERSION_1_3;
+    stdev->device.get_properties_extended = stdev_get_properties_extended;
+    stdev->device.start_recognition_extended = stdev_start_recognition_extended;
+    stdev->device.set_parameter = stdev_set_parameter;
+    stdev->device.get_parameter = stdev_get_parameter;
+    stdev->device.query_parameter = stdev_query_parameter;
+#endif
+    stdev->device.get_properties = stdev_get_properties;
+    stdev->device.start_recognition = stdev_start_recognition;
     stdev->device.common.module = (struct hw_module_t *)module;
     stdev->device.common.close = stdev_close;
-    stdev->device.get_properties = stdev_get_properties;
     stdev->device.load_sound_model = stdev_load_sound_model;
     stdev->device.unload_sound_model = stdev_unload_sound_model;
-    stdev->device.start_recognition = stdev_start_recognition;
     stdev->device.stop_recognition = stdev_stop_recognition;
     stdev->send_socket = stdev->term_socket = stdev->uevent_socket = -1;
     stdev->streaming_pcm = NULL;
@@ -1806,7 +1960,7 @@ static int stdev_open(
             if (!stdev->notify_sthal_status) {
                 ALOGE("%s: Error in grabbing function from %s", __func__, AUDIO_PRIMARY_HAL_LIBRARY_PATH);
                 stdev->notify_sthal_status = 0;
-                goto notify_exit;
+//                goto notify_exit;
             }
         }
     }
@@ -1819,7 +1973,7 @@ static int stdev_open(
     pthread_mutex_unlock(&stdev->lock);
     return 0;
 
-notify_exit:
+// notify_exit:
     if(stdev->audio_primary_lib)
         dlclose(stdev->audio_primary_lib);
 hal_exit:

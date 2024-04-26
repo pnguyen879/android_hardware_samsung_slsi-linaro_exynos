@@ -17,6 +17,7 @@
 #
 # Primary SoundTrigger HAL module
 #
+ifeq ($(BOARD_USE_COMMON_AUDIOHAL), true)
 ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL),true)
 LOCAL_PATH := $(call my-dir)
 
@@ -40,21 +41,16 @@ ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL_MMAP),true)
 LOCAL_CFLAGS += -DMMAP_INTERFACE_ENABLED
 endif
 
-LOCAL_MODULE := sound_trigger.primary.$(TARGET_SOC)
-
-ifeq ($(BOARD_USES_VENDORIMAGE), true)
-LOCAL_PROPRIETARY_MODULE := true
+ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL_2_3),true)
+LOCAL_CFLAGS += -DSTHAL_2_3
 endif
+
+LOCAL_MODULE := sound_trigger.primary.$(TARGET_SOC)
+LOCAL_PROPRIETARY_MODULE := true
 LOCAL_MODULE_RELATIVE_PATH := hw
 LOCAL_MODULE_TAGS := optional
 
 include $(BUILD_SHARED_LIBRARY)
-
-else
-
-ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL), STHAL_TEST)
-LOCAL_PATH := $(call my-dir)
 include $(call all-makefiles-under,$(LOCAL_PATH))
 endif
-
 endif
