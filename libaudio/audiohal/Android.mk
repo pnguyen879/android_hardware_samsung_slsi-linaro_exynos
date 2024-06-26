@@ -49,6 +49,10 @@ LOCAL_HEADER_LIBRARIES := libhardware_headers
 LOCAL_SHARED_LIBRARIES := liblog libcutils libprocessgroup libaudioproxy
 LOCAL_SHARED_LIBRARIES += libaudio-ril
 
+ifeq ($(BOARD_USE_SPEECH_PARAM),true)
+LOCAL_CFLAGS += -DSUPPORT_SPEECH_PARAM
+endif
+
 ifeq ($(BOARD_USE_SOUNDTRIGGER_HAL),true)
 LOCAL_CFLAGS += -DSUPPORT_STHAL_INTERFACE
 endif

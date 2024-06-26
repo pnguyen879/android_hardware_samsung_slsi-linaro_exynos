@@ -662,11 +662,11 @@ device_type get_device_id(struct audio_device *adev, audio_devices_t devices)
     return ret;
 }
 
-static int get_apcall_speech_param(struct stream_out *out)
+static int get_apcall_speech_param(struct stream_out *out __attribute__((unused)))
 {
+#ifdef SUPPORT_SPEECH_PARAM
     struct audio_device *adev = out->adev;
     device_type device = get_device_id(adev, out->common.requested_devices);
-    int ret = 8;
     //Voip WB
     if(device == DEVICE_EARPIECE)return 8;
     if(device == DEVICE_SPEAKER)return 9;
@@ -686,7 +686,8 @@ static int get_apcall_speech_param(struct stream_out *out)
             return 7;
         }
     }
-    return ret;
+#endif
+    return 8;
 }
 
 static device_type adev_get_device(void *stream, audio_usage_type usage_type)
