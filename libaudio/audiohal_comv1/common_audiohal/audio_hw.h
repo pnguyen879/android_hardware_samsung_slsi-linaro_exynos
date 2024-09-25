@@ -188,6 +188,7 @@ struct audio_device {
 
     bool bluetooth_nrec;
     bool screen_on;
+    bool btsco_on;
 
     fm_state fm_state;
     // STHAL seamless status

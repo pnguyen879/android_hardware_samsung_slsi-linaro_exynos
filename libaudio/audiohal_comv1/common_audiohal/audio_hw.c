@@ -2190,6 +2190,19 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
 
     pthread_mutex_lock(&out->common.lock);
     if (out->common.stream_status == STATUS_STANDBY) {
+        /*
+         * BT_SCO case check whether SCO profile is ready or not,
+         * if not ready then BT NB/WB status might not be updated
+         */
+        if (audio_is_bluetooth_sco_device(out->common.requested_devices)) {
+            if (!adev->btsco_on) {
+                ALOGE("%s: BT_SCO profile is not ready, return error", __func__);
+                pthread_mutex_unlock(&out->common.lock);
+                usleep(50000);
+                return -EAGAIN;
+            }
+        }
+
         out->common.stream_status = STATUS_READY;
         ALOGI("%s-%s: transited to Ready", stream_table[out->common.stream_type], __func__);
 
@@ -3111,6 +3124,19 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer, size_t byte
     }
 
     if (in->common.stream_status == STATUS_STANDBY) {
+        /*
+         * BT_SCO case check whether SCO profile is ready or not,
+         * if not ready then BT NB/WB status might not be updated
+         */
+        if (audio_is_bluetooth_sco_device(in->common.requested_devices)) {
+            if (!adev->btsco_on) {
+                ALOGE("%s: BT_SCO profile is not ready, return error", __func__);
+                pthread_mutex_unlock(&in->common.lock);
+                usleep(50000);
+                return -EIO;
+            }
+        }
+
         in->common.stream_status = STATUS_READY;
         ALOGI("%s-%s: transited to Ready", stream_table[in->common.stream_type], __func__);
 
@@ -3702,6 +3728,17 @@ static int adev_set_parameters(struct audio_hw_device *dev, const char *kvpairs)
         }
         ALOGV("seamless_enabled = %d", adev->seamless_enabled);
         str_parms_del(parms, AUDIO_PARAMETER_SEAMLESS_VOICE);
+    }
+
+    ret = str_parms_get_str(parms, "BT_SCO", value, sizeof(value));
+    if (ret >= 0) {
+        ALOGI("device-%s: BT_SCO = %s)", __func__, value);
+        if (strcmp(value, AUDIO_PARAMETER_VALUE_ON) == 0)
+            adev->btsco_on = true;
+        else
+            adev->btsco_on = false;
+
+        str_parms_del(parms, "BT_SCO");
     }
 
     // For Voice Manager
@@ -4790,6 +4827,8 @@ static int adev_open(
 
     adev->voice_volume = 0;
     adev->mic_mute = false;
+
+    adev->btsco_on = false;
 
     adev->fm_state = FM_OFF;
 
