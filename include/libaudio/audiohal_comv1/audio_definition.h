@@ -92,4 +92,6 @@ typedef enum {
 /* Direct Stream playback Volume Unit */
 #define DIRECT_PLAYBACK_VOLUME_MAX   8192
 
+#define MMAP_MIN_SIZE_FRAMES_MAX     64 * 1024
+
 #endif  // __EXYNOS_AUDIOHAL_DEFINITION_H__

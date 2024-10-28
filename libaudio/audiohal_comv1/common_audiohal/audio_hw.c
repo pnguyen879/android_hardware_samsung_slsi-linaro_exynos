@@ -38,8 +38,6 @@
 #include "audio_proxy_interface.h"
 #include "audio_odm_interface.h"
 
-
-
 /******************************************************************************/
 /** Note: the following macro is used for extremely verbose logging message. **/
 /** In order to run with ALOG_ASSERT turned on, we need to have LOG_NDEBUG   **/
@@ -557,7 +555,7 @@ device_type get_indevice_id_from_outdevice(struct audio_device *adev, device_typ
                 in = DEVICE_NONE;
                 break;
             default:
-                if(adev->support_reciever) {
+                if (adev->support_reciever) {
                     in = DEVICE_HANDSET_MIC;
                 } else {
                     in = DEVICE_SPEAKER_MIC;
@@ -624,8 +622,12 @@ device_type get_device_id(struct audio_device *adev, audio_devices_t devices)
     if (isCallMode(adev)) {
         if (devices > AUDIO_DEVICE_BIT_IN) {
             /* Input Devices */
-            return get_indevice_id_from_outdevice(adev,
-                       get_device_id(adev, adev->primary_output->common.requested_devices));
+            if (isCPCallMode(adev) && !is_usage_CPCall(adev->active_capture_ausage)) {
+                ALOGRV("%s: do not route call path before call setup", __func__);
+            } else {
+                return get_indevice_id_from_outdevice(adev,
+                           get_device_id(adev, adev->primary_output->common.requested_devices));
+            }
         } else {
             switch (devices) {
                 case AUDIO_DEVICE_OUT_EARPIECE:
@@ -958,7 +960,8 @@ void update_call_stream(struct stream_out *out, audio_devices_t current_devices,
         if (in_node && in_node->in && in_node->in->common.stream_status > STATUS_STANDBY) {
             lock[in_node->in->common.stream_type] = &in_node->in->common.lock;
             if (lock[in_node->in->common.stream_type] &&
-                ((in_node->in->common.stream_type == ASTREAM_CAPTURE_PRIMARY))) {
+                ((in_node->in->common.stream_type == ASTREAM_CAPTURE_PRIMARY)
+                || (in_node->in->common.stream_type == ASTREAM_CAPTURE_CALL))) {
                 pthread_mutex_lock(lock[in_node->in->common.stream_type]);
                 /* WDMA PCM re-open for path change during call or when entering or ending call*/
                 if (in_node->in->common.proxy_stream && in_node->in->common.stream_status == STATUS_PLAYING &&
@@ -1102,7 +1105,6 @@ bool adev_set_route(void *stream, audio_usage_type usage_type, bool set, force_r
 
     bool drive_capture_route = false;
     bool capture_set = set;
-
     bool ret = true;
 
     // Check Audio Path Routing Skip
@@ -1184,19 +1186,20 @@ bool adev_set_route(void *stream, audio_usage_type usage_type, bool set, force_r
 
             if (adev->is_playback_path_routed) {
                 /* Route Change Case */
-                if ((adev->active_playback_ausage == new_playback_ausage) &&
-                    (adev->active_playback_device == new_playback_device)) {
+                if (((adev->active_playback_ausage == new_playback_ausage) &&
+                    (adev->active_playback_device == new_playback_device) &&
+                    (adev->active_playback_modifier == new_playback_modifier))) {
                     // Requested same usage and same device, skip!!!
-                    ALOGI("%s-%s-1: skip re-route as same device(%s) and same usage(%s)",
-                           stream_table[out->common.stream_type], __func__,
-                           device_table[new_playback_device], usage_table[new_playback_ausage]);
+                    ALOGI("%s-%s-1: skip re-route as same device(%s) and same usage(%s) ",
+                          stream_table[out->common.stream_type], __func__,
+                          device_table[new_playback_device], usage_table[new_playback_ausage]);
                 } else {
                     // Requested different usage or device, re-route!!!
                     proxy_set_route(adev->proxy, (int)new_playback_ausage,
                                    (int)new_playback_device, (int)new_playback_modifier, ROUTE);
                     ALOGI("%s-%s-1: re-routes to device(%s) for usage(%s)",
-                           stream_table[out->common.stream_type], __func__,
-                           device_table[new_playback_device], usage_table[new_playback_ausage]);
+                          stream_table[out->common.stream_type], __func__,
+                          device_table[new_playback_device], usage_table[new_playback_ausage]);
 
                     fmradio_set_mixer_for_route(adev, new_playback_ausage);
                 }
@@ -1276,9 +1279,10 @@ bool adev_set_route(void *stream, audio_usage_type usage_type, bool set, force_r
                 if (adev->is_capture_path_routed) {
                     /* Route Change Case */
                     if ((adev->active_capture_ausage == new_capture_ausage) &&
-                        (adev->active_capture_device == new_capture_device)) {
+                        (adev->active_capture_device == new_capture_device) &&
+                        (adev->active_capture_modifier == new_capture_modifier)) {
                         // Requested same usage and same device, skip!!!
-                        ALOGI("%s-%s-2: skip re-route as same device(%s) and same usage(%s)",
+                        ALOGI("%s-%s-2: skip re-route as same device(%s) and same usage(%s) and same modifier",
                               stream_table[out->common.stream_type], __func__,
                               device_table[new_capture_device], usage_table[new_capture_ausage]);
                     } else {
@@ -1347,9 +1351,10 @@ bool adev_set_route(void *stream, audio_usage_type usage_type, bool set, force_r
                 if (adev->is_capture_path_routed) {
                     /* Route Change Case */
                     if ((adev->active_capture_ausage == new_capture_ausage) &&
-                        (adev->active_capture_device == new_capture_device)) {
+                        (adev->active_capture_device == new_capture_device) &&
+                        (adev->active_capture_modifier == new_capture_modifier)) {
                         // Requested same usage and same device, skip!!!
-                        ALOGI("%s-%s-3: skip re-route as same device(%s) and same usage(%s)",
+                        ALOGI("%s-%s-3: skip re-route as same device(%s) and same usage(%s) and same modifier",
                               stream_table[in->common.stream_type], __func__,
                               device_table[new_capture_device], usage_table[new_capture_ausage]);
                     } else {
@@ -1636,7 +1641,7 @@ static size_t out_get_buffer_size(const struct audio_stream *stream)
     if (out->common.stream_type == ASTREAM_PLAYBACK_COMPR_OFFLOAD)
         buffer_size = proxy_get_actual_period_size(out->common.proxy_stream);
     else
-    buffer_size = proxy_get_actual_period_size(out->common.proxy_stream) *
+        buffer_size = proxy_get_actual_period_size(out->common.proxy_stream) *
                   (unsigned int)audio_stream_out_frame_size((const struct audio_stream_out *)stream);
 
     ALOGVV("%s-%s: exit with %d bytes", stream_table[out->common.stream_type], __func__, (int)buffer_size);
@@ -1742,7 +1747,7 @@ static int out_dump(const struct audio_stream *stream, int fd)
     bool justLocked = pthread_mutex_trylock(&out->common.lock) == 0;
     snprintf(buffer, len, "\tMutex: %s\n", justLocked ? "locked" : "unlocked");
     write(fd,buffer,strlen(buffer));
-    if(justLocked)
+    if (justLocked)
         pthread_mutex_unlock(&out->common.lock);
 
     snprintf(buffer, len, "\toutput devices %d\n",out->common.requested_devices);
@@ -1959,8 +1964,9 @@ static int out_set_parameters(struct audio_stream *stream, const char *kvpairs)
             ALOGV("%s-%s: requested to change route to AUDIO_DEVICE_NONE",
                   stream_table[out->common.stream_type], __func__);
 #ifdef SUPPORT_USB_OFFLOAD
-            if (out->common.stream_status > STATUS_STANDBY &&
-               (current_devices & AUDIO_DEVICE_OUT_ALL_USB) && !is_usb_connected()) {
+            if ((out->common.stream_status > STATUS_STANDBY) &&
+                (current_devices & AUDIO_DEVICE_OUT_ALL_USB) &&
+                 !is_usb_connected()) {
                 pthread_mutex_lock(&adev->lock);
                 out->common.requested_devices = AUDIO_DEVICE_OUT_SPEAKER;
                 adev_set_route((void *)out, AUSAGE_PLAYBACK, ROUTE, NON_FORCE_ROUTE);
@@ -2165,7 +2171,9 @@ static int out_set_volume(struct audio_stream_out *stream, float left, float rig
         if (out->vol_left != left || out->vol_right != right || adev->update_mmap_volume) {
             out->vol_left = left;
             out->vol_right = right;
+
             proxy_set_volume(adev->proxy, VOLUME_TYPE_MMAP, left, right);
+
             if (adev->update_mmap_volume)
                 adev->update_mmap_volume = false;
         }
@@ -2186,7 +2194,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
     struct audio_device *adev = out->adev;
     int ret = 0, wrote = 0;
 
-    //ALOGVV("%s-%s: enter", stream_table[out->common.stream_type], __func__);
+    ALOGVV("%s-%s: enter", stream_table[out->common.stream_type], __func__);
 
     pthread_mutex_lock(&out->common.lock);
     if (out->common.stream_status == STATUS_STANDBY) {
@@ -2251,6 +2259,8 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
         if (ret != 0) {
             ALOGE("%s-%s: failed to open Proxy Playback Stream!",
                   stream_table[out->common.stream_type], __func__);
+
+            out->common.stream_status = STATUS_STANDBY;
             pthread_mutex_unlock(&out->common.lock);
             return ret;
         } else {
@@ -2328,7 +2338,7 @@ static ssize_t out_write(struct audio_stream_out *stream, const void* buffer, si
     }
     pthread_mutex_unlock(&out->common.lock);
 
-    //ALOGVV("%s-%s: exit", stream_table[out->common.stream_type], __func__);
+    ALOGVV("%s-%s: exit", stream_table[out->common.stream_type], __func__);
     return wrote;
 }
 
@@ -2353,9 +2363,10 @@ static int out_get_presentation_position(const struct audio_stream_out *stream,
                                          uint64_t *frames, struct timespec *timestamp)
 {
     struct stream_out *out = (struct stream_out *)stream;
+    int ret = 0;
 
     pthread_mutex_lock(&out->common.lock);
-    int ret = proxy_get_presen_position(out->common.proxy_stream, frames, timestamp);
+    ret = proxy_get_presen_position(out->common.proxy_stream, frames, timestamp);
     pthread_mutex_unlock(&out->common.lock);
 
     return ret;
@@ -2445,7 +2456,7 @@ static int out_resume(struct audio_stream_out* stream)
     return ret;
 }
 
-static int out_drain(struct audio_stream_out* stream, audio_drain_type_t type )
+static int out_drain(struct audio_stream_out* stream, audio_drain_type_t type)
 {
     struct stream_out *out = (struct stream_out *)stream;
     int ret = -ENOSYS;
@@ -2510,7 +2521,6 @@ static int out_stop(const struct audio_stream_out* stream)
             proxy_stop_playback_stream((void *)(out->common.proxy_stream));
             out->common.stream_status = STATUS_IDLE;
             ALOGI("%s-%s: transited to Idle", stream_table[out->common.stream_type], __func__);
-
         } else
             ALOGV("%s-%s: invalid operation - stream status (%d)",
                   stream_table[out->common.stream_type], __func__, out->common.stream_status);
@@ -2563,7 +2573,7 @@ static int out_create_mmap_buffer(const struct audio_stream_out *stream,
 
     pthread_mutex_lock(&out->common.lock);
 
-    if (info == NULL || min_size_frames == 0) {
+    if (!info || min_size_frames <= 0 || min_size_frames > MMAP_MIN_SIZE_FRAMES_MAX) {
         ALOGE("%s-%s: info = %p, min_size_frames = %d", stream_table[out->common.stream_type],
                                                         __func__, info, min_size_frames);
         ret = -EINVAL;
@@ -2613,14 +2623,15 @@ static int out_get_mmap_position(const struct audio_stream_out *stream,
     struct stream_out *out = (struct stream_out *)stream;
     int ret = 0;
 
-    ALOGV("%s-%s: entered", stream_table[out->common.stream_type], __func__);
+    // Note: enabling log messages can cause performance issues
+    ALOGVV("%s-%s: entered", stream_table[out->common.stream_type], __func__);
 
     if (position == NULL) return -EINVAL;
     if (out->common.stream_type != ASTREAM_PLAYBACK_MMAP) return -ENOSYS;
 
     ret = proxy_get_mmap_position((void *)(out->common.proxy_stream), (void *)position);
 
-    ALOGV("%s-%s: exited", stream_table[out->common.stream_type], __func__);
+    ALOGD("%s-%s: exited %d", stream_table[out->common.stream_type], __func__, ret);
     return ret;
 }
 
@@ -2654,6 +2665,25 @@ static void out_update_source_metadata(struct audio_stream_out *stream,
     return ;
 }
 
+int out_set_event_callback(struct audio_stream_out *stream, stream_event_callback_t callback, void *cookie)
+{
+	struct stream_out *out = (struct stream_out *)stream;
+	int ret = -EINVAL;
+
+	ALOGV("%s-%s: entered", stream_table[out->common.stream_type], __func__);
+
+	if (callback && cookie) {
+		out->event_callback = callback;
+		out->event_cookie = cookie;
+		ALOGD("%s-%s: set event_callback function & cookie", stream_table[out->common.stream_type], __func__);
+
+		ret = 0;
+	}
+
+	ALOGV("%s-%s: exit", stream_table[out->common.stream_type], __func__);
+
+	return ret;
+}
 
 /****************************************************************************/
 /**                                                                        **/
@@ -2777,7 +2807,7 @@ static int in_dump(const struct audio_stream *stream, int fd)
     snprintf(buffer, len, "Audio Stream Input::dump\n");
     write(fd,buffer,strlen(buffer));
     justLocked = pthread_mutex_trylock(&in->common.lock) == 0;
-    if(justLocked)
+    if (justLocked)
         pthread_mutex_unlock(&in->common.lock);
     snprintf(buffer, len, "\tinput Mutex: %s\n", justLocked ? "locked" : "unlocked");
     write(fd,buffer,strlen(buffer));
@@ -2788,17 +2818,17 @@ static int in_dump(const struct audio_stream *stream, int fd)
     write(fd,buffer,strlen(buffer));
     snprintf(buffer, len, "\tinput flags: %x\n",in->requested_flags);
     write(fd,buffer,strlen(buffer));
-    snprintf(buffer, len, "\tinput sample rate: %u\n",in->common.requested_sample_rate);
+    snprintf(buffer, len, "\tinput sample rate: %u\n", in->common.requested_sample_rate);
     write(fd,buffer,strlen(buffer));
-    snprintf(buffer, len, "\tinput channel mask: %u\n",in->common.requested_channel_mask);
+    snprintf(buffer, len, "\tinput channel mask: %u\n", in->common.requested_channel_mask);
     write(fd,buffer,strlen(buffer));
-    snprintf(buffer, len, "\tinput format: %d\n",in->common.requested_format);
+    snprintf(buffer, len, "\tinput format: %d\n", in->common.requested_format);
     write(fd,buffer,strlen(buffer));
-    snprintf(buffer, len, "\tinput audio usage: %d\n",in->common.stream_usage);
+    snprintf(buffer, len, "\tinput audio usage: %d\n", in->common.stream_usage);
     write(fd,buffer,strlen(buffer));
-    snprintf(buffer, len, "\tinut standby state: %d\n",in->common.stream_status);
+    snprintf(buffer, len, "\tinut standby state: %d\n", in->common.stream_status);
     write(fd,buffer,strlen(buffer));
-    //snprintf(buffer, len, "\tinput mixer_path_setup: %s\n",bool_to_str(in->mixer_path_setup));
+    //snprintf(buffer, len, "\tinput mixer_path_setup: %s\n", bool_to_str(in->mixer_path_setup));
     //write(fd,buffer,strlen(buffer));
 
     proxy_dump_capture_stream(in->common.proxy_stream, fd);
@@ -2846,10 +2876,10 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
     ALOGD("%s-%s: enter with param = %s", stream_table[in->common.stream_type], __func__, kvpairs);
 
 #ifdef SUPPORT_STHAL_INTERFACE
-        if (in->common.stream_type == ASTREAM_CAPTURE_HOTWORD) {
-            ALOGD("%s-%s: exit", stream_table[in->common.stream_type], __func__);
-            return 0;
-        }
+    if (in->common.stream_type == ASTREAM_CAPTURE_HOTWORD) {
+        ALOGD("%s-%s: exit", stream_table[in->common.stream_type], __func__);
+        return 0;
+    }
 #endif
 
     if (is_usb_in_device(in->common.requested_devices)) {
@@ -2861,6 +2891,25 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
     parms = str_parms_create_str(kvpairs);
 
     pthread_mutex_lock(&in->common.lock);
+
+    // Change Audio Input Source
+    ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_INPUT_SOURCE, value, sizeof(value));
+    if (ret >= 0) {
+        unsigned int new_source = (unsigned int)atoi(value);
+        if ((new_source != in->requested_source) && (new_source != AUDIO_SOURCE_DEFAULT)) {
+            in->requested_source = new_source;
+
+            if (in->requested_source == AUDIO_SOURCE_VOICE_CALL) {
+                in->common.stream_usage = adev_get_capture_ausage(adev, in);
+                proxy_update_capture_usage((void *)(in->common.proxy_stream),(int)in->common.stream_usage);
+            }
+            ALOGD("%s-%s: changed source to %d from %d ", stream_table[in->common.stream_type],
+                                                   __func__, new_source, in->requested_source);
+        } else
+            ALOGD("%s-%s: requested to change same source to %d",
+                                  stream_table[in->common.stream_type], __func__, new_source);
+    }
+
     ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_ROUTING, value, sizeof(value));
     if (ret >= 0) {
         audio_devices_t requested_devices = atoi(value);
@@ -2892,7 +2941,7 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
             pthread_mutex_unlock(&adev->lock);
 
             if (need_routing) {
-          /* Force close active input pcm node before routing to new input device,
+                /* Force close active input pcm node before routing to new input device,
                  * to avoid auto triggering of loopback pcm nodes while routing to new path */
                 if (in->pcm_reconfig) {
                     ALOGD(" %s: pcm reconfig", __func__);
@@ -2996,27 +3045,6 @@ static int in_set_parameters(struct audio_stream *stream, const char *kvpairs)
         }
     }
 
-    // Change Audio Input Source
-    ret = str_parms_get_str(parms, AUDIO_PARAMETER_STREAM_INPUT_SOURCE, value, sizeof(value));
-    if (ret >= 0) {
-        if (in->common.stream_status > STATUS_READY)
-            goto not_acceptable;
-        else {
-            unsigned int new_source = (unsigned int)atoi(value);
-            if ((new_source != in->requested_source) && (new_source != AUDIO_SOURCE_DEFAULT)) {
-                in->requested_source = new_source;
-
-                if (in->requested_source == AUDIO_SOURCE_VOICE_CALL) {
-                    in->common.stream_usage = adev_get_capture_ausage(adev, in);
-                    proxy_update_capture_usage((void *)(in->common.proxy_stream),(int)in->common.stream_usage);
-                }
-                ALOGD("%s-%s: changed source to %d from %d ", stream_table[in->common.stream_type],
-                                                       __func__, new_source, in->requested_source);
-            } else
-                ALOGD("%s-%s: requested to change same source to %d",
-                                      stream_table[in->common.stream_type], __func__, new_source);
-        }
-    }
     pthread_mutex_unlock(&in->common.lock);
 
     str_parms_destroy(parms);
@@ -3079,11 +3107,10 @@ static int in_add_audio_effect(const struct audio_stream *stream, effect_handle_
 {
     struct stream_in *in = (struct stream_in *)stream;
 
-    ALOGI("%s-%s: exit with effect(%p)", stream_table[in->common.stream_type], __func__, effect);
-
     if (in->adev->amode == AUDIO_MODE_IN_COMMUNICATION)
         proxy_set_apcall_txse();
 
+    ALOGVV("%s-%s: exit with effect(%p)", stream_table[in->common.stream_type], __func__, effect);
     return 0;
 }
 
@@ -3091,10 +3118,9 @@ static int in_remove_audio_effect(const struct audio_stream *stream, effect_hand
 {
     struct stream_in *in = (struct stream_in *)stream;
 
-    ALOGI("%s-%s: exit with effect(%p)", stream_table[in->common.stream_type], __func__, effect);
-
     proxy_clear_apcall_txse();
 
+    ALOGVV("%s-%s: exit with effect(%p)", stream_table[in->common.stream_type], __func__, effect);
     return 0;
 }
 
@@ -3148,13 +3174,13 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer, size_t byte
             audio_stream_type new_stream_type = in->common.stream_type;
             if (isCPCallMode(adev) && isCallRecording(in->requested_source)) {
                 new_stream_type = ASTREAM_CAPTURE_CALL;
-                ALOGI(" %s: pcm reconfig as ASTREAM_CAPTURE_CALL", __func__);
+                ALOGD(" %s: pcm reconfig as ASTREAM_CAPTURE_CALL", __func__);
             } else if (isCPCallMode(adev)) {
                 new_stream_type = ASTREAM_CAPTURE_PRIMARY;
-                ALOGI(" %s: pcm reconfig as ASTREAM_CAPTURE_PRIMARY on CP Call mode", __func__);
+                ALOGD(" %s: pcm reconfig as ASTREAM_CAPTURE_PRIMARY on CP Call mode", __func__);
             } else {
                 new_stream_type = ASTREAM_CAPTURE_PRIMARY;
-                ALOGI(" %s: pcm reconfig as ASTREAM_CAPTURE_PRIMARY on Normal mode", __func__);
+                ALOGD(" %s: pcm reconfig as ASTREAM_CAPTURE_PRIMARY on Normal mode", __func__);
                 // CP Call stopped, normal rec is in progress. un-route incall tx path.
                 adev_set_route((void *)in, AUSAGE_CAPTURE, UNROUTE, FORCE_ROUTE);
             }
@@ -3165,7 +3191,8 @@ static ssize_t in_read(struct audio_stream_in *stream, void* buffer, size_t byte
             {
                 in->common.stream_type = new_stream_type;
                 in->common.stream_usage = adev_get_capture_ausage(adev, in);
-                ALOGI("%s-%s: updated capture usage(%s)", stream_table[in->common.stream_type], __func__, usage_table[in->common.stream_usage]);
+                ALOGI("%s-%s: updated capture usage(%s)", stream_table[in->common.stream_type], __func__
+                                                        , usage_table[in->common.stream_usage]);
 
                 proxy_reconfig_capture_usage((void *)(in->common.proxy_stream),
                                               (int)in->common.stream_type,
@@ -3280,7 +3307,6 @@ static int in_stop(const struct audio_stream_in* stream)
             proxy_stop_capture_stream((void *)(in->common.proxy_stream));
             in->common.stream_status = STATUS_IDLE;
             ALOGI("%s-%s: transited to Idle", stream_table[in->common.stream_type], __func__);
-
         } else
             ALOGV("%s-%s: invalid operation - stream status (%d)",
                   stream_table[in->common.stream_type], __func__, in->common.stream_status);
@@ -3333,7 +3359,7 @@ static int in_create_mmap_buffer(const struct audio_stream_in *stream,
 
     pthread_mutex_lock(&in->common.lock);
 
-    if (info == NULL || min_size_frames == 0) {
+    if (!info || min_size_frames <= 0 || min_size_frames > MMAP_MIN_SIZE_FRAMES_MAX) {
         ALOGE("%s-%s: info = %p, min_size_frames = %d", stream_table[in->common.stream_type],
                                                         __func__, info, min_size_frames);
         ret = -EINVAL;
@@ -3383,16 +3409,17 @@ static int in_get_mmap_position(const struct audio_stream_in *stream,
     struct stream_in *in = (struct stream_in *)stream;
     int ret = 0;
 
-    ALOGV("%s-%s: entered", stream_table[in->common.stream_type], __func__);
+    // Note: enabling log messages can cause performance issues
+    ALOGVV("%s-%s: entered", stream_table[in->common.stream_type], __func__);
 
     if (position == NULL) return -EINVAL;
     if (in->common.stream_type != ASTREAM_CAPTURE_MMAP) return -ENOSYS;
 
     ret = proxy_get_mmap_position((void *)(in->common.proxy_stream), (void *)position);
 
-    ALOGV("%s-%s: exited", stream_table[in->common.stream_type], __func__);
+    ALOGD("%s-%s: exited %d", stream_table[in->common.stream_type], __func__, ret);
 
-    return 0;
+    return ret;
 }
 
 static int in_get_active_microphones(const struct audio_stream_in *stream,
@@ -3492,8 +3519,13 @@ static int adev_set_voice_volume(struct audio_hw_device *dev, float volume)
     struct stream_out *primary_output = adev->primary_output;
     struct stream_out *fast_output = adev->fast_output;
 
-    if(volume < 0.0f || volume > 1.0f) {
+    if (volume < 0.0f || volume > 1.0f) {
         ALOGD("device-%s: invalid volume (%f)", __func__, volume);
+        return -EINVAL;
+    }
+
+    if (adev->voice == NULL) {
+        ALOGE("%s: Failed to get Voice Manager", __func__);
         return -EINVAL;
     }
 
@@ -3615,7 +3647,7 @@ static int adev_set_mode(struct audio_hw_device *dev, audio_mode_t mode)
     }
     pthread_mutex_unlock(&adev->lock);
 
-    ALOGD("device-%s: exit", __func__);
+    ALOGVV("device-%s: exit", __func__);
     return 0;
 }
 
@@ -3956,7 +3988,6 @@ static int adev_open_output_stream(
         if ((flags & AUDIO_OUTPUT_FLAG_RAW) != 0) {
             /* Sub-Case: Low Latency Playback Stream for ProAudio */
             ALOGI("device-%s: requested to open Low Latency playback stream", __func__);
-
             out->common.stream_type = ASTREAM_PLAYBACK_LOW_LATENCY;
         } else {
             /* Sub-Case: Normal Fast Playback Stream */
@@ -4011,6 +4042,7 @@ static int adev_open_output_stream(
     out->stream.get_render_position = out_get_render_position;
     out->stream.get_next_write_timestamp = out_get_next_write_timestamp;
     out->stream.get_presentation_position = out_get_presentation_position;
+    out->stream.set_event_callback = out_set_event_callback;
 
     // For AudioHAL V4
     out->stream.update_source_metadata = out_update_source_metadata;
@@ -4143,19 +4175,19 @@ static void adev_close_output_stream(
 
         if (adev->primary_output == out) {
             ALOGI("%s-%s: requested to close Primary playback stream",
-                                                   stream_table[out->common.stream_type], __func__);
+                    stream_table[out->common.stream_type], __func__);
             adev->primary_output = NULL;
         }
 
         if (adev->fast_output == out) {
             ALOGI("%s-%s: requested to close Fast playback stream",
-                          stream_table[out->common.stream_type], __func__);
+                    stream_table[out->common.stream_type], __func__);
             adev->fast_output = NULL;
         }
 
         if (adev->compress_output == out) {
             ALOGI("%s-%s: requested to close Compress Offload playback stream",
-                                                   stream_table[out->common.stream_type], __func__);
+                    stream_table[out->common.stream_type], __func__);
             adev->compress_output = NULL;
         }
 
@@ -4179,6 +4211,7 @@ static void adev_close_output_stream(
         pthread_mutex_destroy(&out->common.lock);
 
         ALOGI("%s-%s: closed playback stream", stream_table[out->common.stream_type], __func__);
+
         free(out);
     }
 
@@ -4241,7 +4274,8 @@ static int adev_open_input_stream(
 #ifdef SUPPORT_STHAL_INTERFACE
     if (source == AUDIO_SOURCE_HOTWORD ||
         (adev->seamless_enabled == true && source == AUDIO_SOURCE_VOICE_RECOGNITION) ||
-        (((flags & AUDIO_INPUT_FLAG_HW_HOTWORD) != 0) && source == AUDIO_SOURCE_VOICE_RECOGNITION)) {
+        (((flags & AUDIO_INPUT_FLAG_HW_HOTWORD) != 0) && source == AUDIO_SOURCE_VOICE_RECOGNITION
+            && !is_usb_in_device(in->common.requested_devices))) {
         /* Case: Use ST HAL interface for Capture */
         in->common.stream_type = ASTREAM_CAPTURE_HOTWORD;
         if (source == AUDIO_SOURCE_HOTWORD ||
@@ -4531,7 +4565,7 @@ static int adev_dump(const audio_hw_device_t *device, int fd)
     bool justLocked = pthread_mutex_trylock(&adev->lock) == 0;
     snprintf(buffer, len, "\tMutex: %s\n", justLocked ? "locked" : "unlocked");
     write(fd,buffer,strlen(buffer));
-    if(justLocked)
+    if (justLocked)
         pthread_mutex_unlock(&adev->lock);
 
     snprintf(buffer, len, "1. Common part\n");
@@ -4569,6 +4603,7 @@ static int adev_dump(const audio_hw_device_t *device, int fd)
         snprintf(buffer, len, "\tTTY mode: %d\n",adev->voice->tty_mode) ;
         write(fd,buffer,strlen(buffer));
     }
+
     snprintf(buffer, len, "\tMic Mute: %s\n",bool_to_str(adev->mic_mute));
     write(fd,buffer,strlen(buffer));
     //snprintf(buffer, len, "\tspectro: %s\n",bool_to_str(adev->spectro)) ;
@@ -4584,8 +4619,6 @@ static int adev_dump(const audio_hw_device_t *device, int fd)
         snprintf(buffer, len, "\tVoIP RX active: %s\n",bool_to_str(adev->voice->voip_rx_active)) ;
         write(fd,buffer,strlen(buffer));
     }
-//    snprintf(buffer, len, "\tRingtone active: %s\n",bool_to_str(adev->ringtone_active));
-//    write(fd,buffer,strlen(buffer));
 
     snprintf(buffer, len, "\n4. About Connectivity part\n");
     write(fd,buffer,strlen(buffer));
@@ -4598,9 +4631,9 @@ static int adev_dump(const audio_hw_device_t *device, int fd)
 
     snprintf(buffer, len, "\n5. About Device Routing part\n");
     write(fd,buffer,strlen(buffer));
-    snprintf(buffer, len, "\tAudio Playback Usage Mode: %d\n",adev->active_playback_ausage);
+    snprintf(buffer, len, "\tAudio Playback Usage Mode: %s\n",usage_table[adev->active_playback_ausage]);
     write(fd,buffer,strlen(buffer));
-    snprintf(buffer, len, "\tAudio Capture Usage Mode: %d\n",adev->active_capture_ausage);
+    snprintf(buffer, len, "\tAudio Capture Usage Mode: %s\n",usage_table[adev->active_capture_ausage]);
     write(fd,buffer,strlen(buffer));
     snprintf(buffer, len, "\tSupport rev: %s\n",bool_to_str(adev->support_reciever));
     write(fd,buffer,strlen(buffer));
@@ -4627,7 +4660,7 @@ static int adev_dump(const audio_hw_device_t *device, int fd)
         write(fd,buffer,strlen(buffer));
     }
 
-    snprintf(buffer, len, "\n9. FM Radio part\n");
+    snprintf(buffer, len, "\n\n9. FM Radio part\n");
     write(fd,buffer,strlen(buffer));
     snprintf(buffer, len, "\tFM Radio State: %s\n",adev->fm_state == FM_ON ? "FM_ON" : "FM_OFF");
     write(fd,buffer,strlen(buffer));
@@ -4638,9 +4671,9 @@ static int adev_dump(const audio_hw_device_t *device, int fd)
 
     voice_ril_dump(fd);
 
-    if(adev->primary_output)
+    if (adev->primary_output)
         out_dump((struct audio_stream *)adev->primary_output,fd);
-    if(adev->active_input)
+    if (adev->active_input)
         in_dump((struct audio_stream *)adev->active_input,fd);
 
     proxy_fw_dump(fd);
@@ -4832,7 +4865,7 @@ static int adev_open(
 
     adev->fm_state = FM_OFF;
 
-   /*
+    /*
      * Initializes Factory Manager.
      * Factory Manager is handling factory mode test scenario.
      */

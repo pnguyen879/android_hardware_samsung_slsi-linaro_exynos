@@ -36,7 +36,6 @@
 /* Factory Mode Test */
 #include "factory_manager.h"
 
-
 /**
  ** Structure for Audio Output Stream
  ** Implements audio_stream_out structure
@@ -96,6 +95,9 @@ struct stream_out {
     float  vol_left, vol_right;
     bool direct_volume_enabled;
 
+    stream_event_callback_t event_callback;
+    void                    *event_cookie;
+
     /* Force Routing */
     force_route force;
     audio_devices_t rollback_devices;
@@ -118,7 +120,6 @@ struct stream_in {
     audio_source_t          requested_source;
 
     bool pcm_reconfig;
-
     struct audio_device *   adev;
 };
 
@@ -126,7 +127,6 @@ struct capture_stream {
     struct listnode node;
     struct stream_in *in;
 };
-
 
 /**
  ** Structure for Audio Primary HW Module
